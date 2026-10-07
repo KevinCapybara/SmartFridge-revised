@@ -22,6 +22,21 @@ function h(tag, attrs = {}, ...children) {
   return el;
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** An icon from the sprite at the top of index.html. */
+function icon(name) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', 'icon');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS(SVG_NS, 'use');
+  use.setAttribute('href', `#i-${name}`);
+  svg.append(use);
+  return svg;
+}
+
+const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 function localToday() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
@@ -206,6 +221,7 @@ function aiStatusText() {
 function renderAiBadge() {
   const badge = $('ai-badge');
   badge.hidden = false;
+  badge.dataset.state = aiUsable() ? 'on' : ai.available ? 'locked' : 'off'; // colours the chip
   badge.textContent = aiUsable() ? 'AI on' : ai.available ? 'AI locked - enter code in Settings' : 'AI off - using built-in food list & recipes';
   $('ai-status').textContent = aiStatusText();
 }
@@ -270,15 +286,15 @@ function renderItems() {
 function itemRow(item) {
   return h(
     'li',
-    { class: 'item' },
+    { class: `item ${item.status}` },
     h('div', {}, h('span', { class: 'item-name' }, item.name), item.quantity > 1 && h('span', { class: 'item-qty' }, ` ×${item.quantity}`)),
     h('span', { class: `pill ${item.status}` }, expiryLabel(item)),
-    h('div', { class: 'item-meta' }, `Best by ${formatDate(item.expiresOn)}`),
+    h('div', { class: 'item-meta' }, icon('calendar'), `Best by ${formatDate(item.expiresOn)}`),
     h(
       'div',
       { class: 'item-actions' },
-      h('button', { class: 'btn small', onclick: () => openEdit(item) }, 'Edit'),
-      h('button', { class: 'btn small danger', onclick: () => removeItem(item), 'aria-label': `Remove ${item.name}` }, 'Used / remove'),
+      h('button', { class: 'btn small ghost', onclick: () => openEdit(item) }, icon('pencil'), 'Edit'),
+      h('button', { class: 'btn small danger', onclick: () => removeItem(item), 'aria-label': `Remove ${item.name}` }, icon('trash-2'), 'Used / remove'),
     ),
   );
 }
@@ -501,8 +517,9 @@ $('parse-btn').addEventListener('click', async () => {
   if (!text.trim()) return toast('Add a receipt photo or paste some text first', true);
 
   const btn = $('parse-btn');
+  const label = btn.querySelector('.btn-label'); // the icon stays; only the words change
   btn.disabled = true;
-  btn.textContent = 'Finding food…';
+  label.textContent = 'Finding food…';
   try {
     const { result, warning } = await tryAi('/api/receipt/parse', { text }, 'receipt');
     showReview(
@@ -514,7 +531,7 @@ $('parse-btn').addEventListener('click', async () => {
     reportError(err);
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Find the food';
+    label.textContent = 'Find the food';
   }
 });
 
@@ -529,7 +546,7 @@ function reviewRow(item = { name: '', days: 7 }) {
       h('input', { 'aria-label': 'Days until it expires', type: 'number', min: 0, max: 3650, value: item.days, inputmode: 'numeric' }),
       h('span', {}, 'days'),
     ),
-    h('button', { class: 'btn small danger', 'aria-label': 'Remove row', onclick: () => row.remove() }, '✕'),
+    h('button', { class: 'btn small danger icon-only', 'aria-label': 'Remove row', onclick: () => row.remove() }, icon('x')),
   );
   return row;
 }
@@ -544,7 +561,7 @@ function showReview({ items, source, warning, model, fromPhoto = false }) {
   if (source === 'rules') parts.push('Matched using the built-in food list (no AI).');
   if (warning) parts.push(warning);
   $('review-note').textContent = parts.join(' ');
-  $('review-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('review-card').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' });
 }
 
 $('review-add-row').addEventListener('click', () => $('review-list').append(reviewRow()));
@@ -614,7 +631,7 @@ function recipeCard(r) {
     'article',
     { class: 'card recipe' },
     h('h3', {}, r.title),
-    r.time_minutes ? h('div', { class: 'time' }, `About ${r.time_minutes} min`) : null,
+    r.time_minutes ? h('div', { class: 'time' }, icon('clock'), `About ${r.time_minutes} min`) : null,
     h('ul', { class: 'chips', 'aria-label': 'Ingredients' }, r.uses.map((u) => h('li', { class: 'chip' }, u)), r.extras.map((x) => h('li', { class: 'chip extra' }, x))),
     h('ol', {}, r.steps.map((s) => h('li', {}, s))),
   );

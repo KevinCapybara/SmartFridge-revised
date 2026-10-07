@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#3f7d4e">
+  <meta name="theme-color" content="#FDFCF8">
   <meta name="description" content="Scan grocery receipts, track what's in your fridge, and use it up before it expires.">
   <title>SmartFridge</title>
 
@@ -16,27 +16,65 @@
   <meta name="apple-mobile-web-app-title" content="SmartFridge">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
 
+  <!-- Self-hosted fonts (Fraunces for headings, Nunito for text): no third-party requests, and they work offline. -->
+  <link rel="preload" href="/fonts/fraunces-latin-soft-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/nunito-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <header class="app-header">
-    <h1>SmartFridge</h1>
-    <div class="header-row">
-      <p id="ai-badge" class="badge" hidden></p>
-      <button id="settings-btn" class="btn small" aria-label="Settings and backup">⚙ Settings</button>
+  <!-- Icons (Lucide, ISC licence). Used as <svg class="icon"><use href="#i-name"/></svg> -->
+  <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
+    <symbol id="i-refrigerator" viewBox="0 0 24 24"><path d="M5 6a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6Z"/> <path d="M5 10h14"/> <path d="M15 7v6"/></symbol>
+    <symbol id="i-receipt-text" viewBox="0 0 24 24"><path d="M13 16H8"/> <path d="M14 8H8"/> <path d="M16 12H8"/> <path d="M4 3a1 1 0 0 1 1-1 1.3 1.3 0 0 1 .7.2l.933.6a1.3 1.3 0 0 0 1.4 0l.934-.6a1.3 1.3 0 0 1 1.4 0l.933.6a1.3 1.3 0 0 0 1.4 0l.933-.6a1.3 1.3 0 0 1 1.4 0l.934.6a1.3 1.3 0 0 0 1.4 0l.933-.6A1.3 1.3 0 0 1 19 2a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1 1.3 1.3 0 0 1-.7-.2l-.933-.6a1.3 1.3 0 0 0-1.4 0l-.934.6a1.3 1.3 0 0 1-1.4 0l-.933-.6a1.3 1.3 0 0 0-1.4 0l-.933.6a1.3 1.3 0 0 1-1.4 0l-.934-.6a1.3 1.3 0 0 0-1.4 0l-.933.6a1.3 1.3 0 0 1-.7.2 1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-chef-hat" viewBox="0 0 24 24"><path d="M17 21a1 1 0 0 0 1-1v-5.35c0-.457.316-.844.727-1.041a4 4 0 0 0-2.134-7.589 5 5 0 0 0-9.186 0 4 4 0 0 0-2.134 7.588c.411.198.727.585.727 1.041V20a1 1 0 0 0 1 1Z"/> <path d="M6 17h12"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/> <circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/> <circle cx="12" cy="13" r="3"/></symbol>
+    <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/> <path d="M20 2v4"/> <path d="M22 4h-4"/> <circle cx="4" cy="20" r="2"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/> <path d="M12 5v14"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/> <path d="m15 5 4 4"/></symbol>
+    <symbol id="i-trash-2" viewBox="0 0 24 24"><path d="M10 11v6"/> <path d="M14 11v6"/> <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/> <path d="M3 6h18"/> <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/> <path d="m6 6 12 12"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 15V3"/> <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/> <path d="m7 10 5 5 5-5"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 3v12"/> <path d="m17 8-5-5-5 5"/> <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/> <path d="M12 6v6l4 2"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><path d="M8 2v3"/> <path d="M16 2v3"/> <rect x="3" y="3" width="18" height="18" rx="2"/> <path d="M3 9h18"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-leaf" viewBox="0 0 24 24"><path d="M11 20a10 10 0 0010-10 25.9 25.9 0 00-1.04-7.281 1 1 0 00-1.755-.325C15.833 5.5 13 5.5 9.8 6.1A7 7 0 0011 20"/> <path d="M2 21a5 5 0 012.911-4.544C7.613 15.212 8.351 15.24 11 13"/></symbol>
+  </svg>
+
+  <!-- Soft colour washes behind everything -->
+  <div class="ambient" aria-hidden="true">
+    <span class="blob blob-moss"></span>
+    <span class="blob blob-clay"></span>
+    <span class="blob blob-sand"></span>
+  </div>
+
+  <header class="site-header">
+    <div class="site-nav">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><svg class="icon"><use href="#i-refrigerator"/></svg></span>
+        <h1>SmartFridge</h1>
+      </div>
+
+      <nav class="tabs" role="tablist" aria-label="Sections">
+        <button role="tab" id="tab-fridge" aria-controls="panel-fridge" aria-selected="true"><svg class="icon" aria-hidden="true"><use href="#i-refrigerator"/></svg><span>Fridge</span></button>
+        <button role="tab" id="tab-scan" aria-controls="panel-scan" aria-selected="false"><svg class="icon" aria-hidden="true"><use href="#i-receipt-text"/></svg><span>Scan receipt</span></button>
+        <button role="tab" id="tab-recipes" aria-controls="panel-recipes" aria-selected="false"><svg class="icon" aria-hidden="true"><use href="#i-chef-hat"/></svg><span>Recipes</span></button>
+      </nav>
+
+      <button id="settings-btn" class="btn ghost nav-settings" aria-label="Settings and backup"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span class="nav-settings-label">Settings</span></button>
     </div>
   </header>
 
-  <nav class="tabs" role="tablist" aria-label="Sections">
-    <button role="tab" id="tab-fridge" aria-controls="panel-fridge" aria-selected="true">Fridge</button>
-    <button role="tab" id="tab-scan" aria-controls="panel-scan" aria-selected="false">Scan receipt</button>
-    <button role="tab" id="tab-recipes" aria-controls="panel-recipes" aria-selected="false">Recipes</button>
-  </nav>
+  <div class="status-row">
+    <p id="ai-badge" class="badge" hidden></p>
+  </div>
 
   <main>
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
     <div id="install-banner" class="card install" hidden>
+      <span class="icon-blob" aria-hidden="true"><svg class="icon"><use href="#i-download"/></svg></span>
       <p id="install-text"></p>
       <div class="row">
         <button id="install-dismiss" class="btn small">Not now</button>
@@ -45,8 +83,16 @@
     </div>
 
     <!-- FRIDGE -->
-    <section id="panel-fridge" role="tabpanel" aria-labelledby="tab-fridge">
-      <div class="card">
+    <section id="panel-fridge" class="panel" role="tabpanel" aria-labelledby="tab-fridge">
+      <div class="panel-head">
+        <span class="icon-blob" aria-hidden="true"><svg class="icon"><use href="#i-refrigerator"/></svg></span>
+        <div>
+          <h2 class="panel-title">What's in your fridge</h2>
+          <p class="panel-lede">Soonest to expire comes first.</p>
+        </div>
+      </div>
+
+      <div class="card filter-card">
         <div class="seg" role="group" aria-label="Filter">
           <button id="filter-all" class="seg-btn" aria-pressed="true">All food</button>
           <button id="filter-soon" class="seg-btn" aria-pressed="false">Soon to expire</button>
@@ -61,9 +107,13 @@
       <p id="empty" class="empty" hidden></p>
 
       <details class="card add-card" id="add-details">
-        <summary>Add an item manually</summary>
+        <summary>
+          <span class="icon-blob" aria-hidden="true"><svg class="icon"><use href="#i-plus"/></svg></span>
+          <span class="summary-text">Add an item manually</span>
+          <svg class="icon chev" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+        </summary>
         <form id="add-form" class="form-grid" autocomplete="off">
-          <label>Name
+          <label class="span-all">Name
             <input id="add-name" name="name" required maxlength="80" placeholder="e.g. milk">
           </label>
           <label>Qty
@@ -72,22 +122,31 @@
           <label>Expires in (days)
             <input id="add-days" name="days" type="number" min="0" max="3650" inputmode="numeric" placeholder="auto">
           </label>
-          <label>or on date
+          <label class="span-date">or on date
             <input id="add-date" name="expiresOn" type="date">
           </label>
-          <p class="hint">Leave both blank and SmartFridge will estimate the shelf life from the name.</p>
-          <button type="submit" class="btn primary">Add to fridge</button>
+          <p class="hint span-all">Leave both blank and SmartFridge will estimate the shelf life from the name.</p>
+          <button type="submit" class="btn primary span-all"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>Add to fridge</button>
         </form>
       </details>
     </section>
 
     <!-- SCAN -->
-    <section id="panel-scan" role="tabpanel" aria-labelledby="tab-scan" hidden>
-      <div class="card">
-        <h2>1. Add the receipt</h2>
-        <label class="btn primary file-btn">
+    <section id="panel-scan" class="panel" role="tabpanel" aria-labelledby="tab-scan" hidden>
+      <div class="panel-head">
+        <span class="icon-blob" aria-hidden="true"><svg class="icon"><use href="#i-receipt-text"/></svg></span>
+        <div>
+          <h2 class="panel-title">Scan a receipt</h2>
+          <p class="panel-lede">Snap a photo or paste the text, and SmartFridge picks out the food.</p>
+        </div>
+      </div>
+
+      <div class="card step-card">
+        <h3 class="step-title"><span class="step-no" aria-hidden="true">1</span>Add the receipt</h3>
+        <label class="btn primary lg block file-btn">
+          <svg class="icon" aria-hidden="true"><use href="#i-camera"/></svg>
           Take photo / choose image
-          <input id="receipt-file" type="file" accept="image/*" capture="environment" hidden>
+          <input id="receipt-file" class="visually-hidden" type="file" accept="image/*" capture="environment">
         </label>
         <p id="vision-note" class="hint"></p>
         <img id="receipt-preview" class="preview" alt="Receipt preview" hidden>
@@ -97,40 +156,50 @@
         <label class="stack">Receipt text <span class="hint">(from the scan, or paste/type it yourself)</span>
           <textarea id="receipt-text" rows="7" placeholder="Scanned text appears here. You can also paste a receipt."></textarea>
         </label>
-        <button id="parse-btn" class="btn primary">Find the food</button>
+        <button id="parse-btn" class="btn primary block"><svg class="icon" aria-hidden="true"><use href="#i-sparkles"/></svg><span class="btn-label">Find the food</span></button>
       </div>
 
-      <div id="review-card" class="card" hidden>
-        <h2>2. Check the list</h2>
+      <div id="review-card" class="card step-card review-card" hidden>
+        <!-- a hand-drawn dashed curve leading from step 1 down to step 2 -->
+        <svg class="connector" viewBox="0 0 120 64" aria-hidden="true" focusable="false"><path d="M60 0C16 14 104 34 60 64"/></svg>
+        <h3 class="step-title"><span class="step-no" aria-hidden="true">2</span>Check the list</h3>
         <p id="review-note" class="hint"></p>
         <ul id="review-list" class="review-list"></ul>
         <div class="row">
-          <button id="review-add-row" class="btn">Add a row</button>
+          <button id="review-add-row" class="btn"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>Add a row</button>
           <button id="review-save" class="btn primary">Add to fridge</button>
         </div>
       </div>
     </section>
 
     <!-- RECIPES -->
-    <section id="panel-recipes" role="tabpanel" aria-labelledby="tab-recipes" hidden>
-      <div class="card">
+    <section id="panel-recipes" class="panel" role="tabpanel" aria-labelledby="tab-recipes" hidden>
+      <div class="panel-head">
+        <span class="icon-blob" aria-hidden="true"><svg class="icon"><use href="#i-chef-hat"/></svg></span>
+        <div>
+          <h2 class="panel-title">Cook with what you have</h2>
+          <p class="panel-lede">Simple recipes built around the food that expires soonest.</p>
+        </div>
+      </div>
+
+      <div class="card recipe-controls">
         <label for="recipe-slider">Use food that expires in <output id="recipe-days-out">7</output> days or less</label>
         <input id="recipe-slider" type="range" min="1" max="14" value="7">
-        <button id="recipe-btn" class="btn primary">What can I make?</button>
+        <button id="recipe-btn" class="btn light lg"><svg class="icon" aria-hidden="true"><use href="#i-chef-hat"/></svg>What can I make?</button>
       </div>
       <p id="recipe-status" class="hint" aria-live="polite"></p>
-      <div id="recipe-list"></div>
+      <div id="recipe-list" class="recipe-list"></div>
     </section>
   </main>
 
   <!-- Edit dialog -->
-  <dialog id="edit-dialog">
+  <dialog id="edit-dialog" aria-labelledby="edit-title">
     <form id="edit-form" method="dialog" class="form-grid">
-      <h2>Edit item</h2>
-      <label>Name <input id="edit-name" required maxlength="80"></label>
+      <h2 id="edit-title" class="dialog-title span-all">Edit item</h2>
+      <label class="span-all">Name <input id="edit-name" required maxlength="80"></label>
       <label>Qty <input id="edit-qty" type="number" min="1" max="999" inputmode="numeric"></label>
       <label>Expires on <input id="edit-date" type="date" required></label>
-      <div class="row">
+      <div class="row span-all">
         <button type="button" id="edit-cancel" class="btn">Cancel</button>
         <button type="submit" class="btn primary">Save</button>
       </div>
@@ -138,38 +207,47 @@
   </dialog>
 
   <!-- Settings dialog -->
-  <dialog id="settings-dialog">
-    <div class="form-grid settings">
-      <h2>Settings</h2>
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+    <div class="settings">
+      <h2 id="settings-title" class="dialog-title">Settings</h2>
 
-      <label class="wide">AI access code
-        <input id="code-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Only needed if your deployment sets one">
-      </label>
-      <p id="ai-status" class="hint wide"></p>
-      <button id="code-save" class="btn primary wide">Save code</button>
+      <section class="settings-group">
+        <h3>AI access</h3>
+        <label>AI access code
+          <input id="code-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Only needed if your deployment sets one">
+        </label>
+        <p id="ai-status" class="hint"></p>
+        <button id="code-save" class="btn primary">Save code</button>
+      </section>
 
-      <h3 class="wide">AI models</h3>
-      <label class="wide">Receipt scanning
-        <select id="receipt-provider"></select>
-      </label>
-      <label class="wide">Recipe generation
-        <select id="recipe-provider"></select>
-      </label>
-      <p id="model-hint" class="hint wide"></p>
+      <section class="settings-group">
+        <h3>AI models</h3>
+        <label>Receipt scanning
+          <select id="receipt-provider"></select>
+        </label>
+        <label>Recipe generation
+          <select id="recipe-provider"></select>
+        </label>
+        <p id="model-hint" class="hint"></p>
 
-      <label class="check wide">
-        <input type="checkbox" id="vision-toggle">
-        <span>Read receipt photos with AI<br><span class="hint">Sends the photo to the receipt-scanning provider above. Turn off to read photos on this device (slower, less accurate, never uploaded).</span></span>
-      </label>
+        <label class="check">
+          <input type="checkbox" id="vision-toggle">
+          <span>Read receipt photos with AI<br><span class="hint">Sends the photo to the receipt-scanning provider above. Turn off to read photos on this device (slower, less accurate, never uploaded).</span></span>
+        </label>
+      </section>
 
-      <h3 class="wide">Backup</h3>
-      <p class="hint wide">Your fridge is stored only on this device. Export a backup before clearing browser data or switching phones.</p>
-      <button id="export-btn" class="btn">Export backup</button>
-      <label class="btn file-btn">Import backup
-        <input id="import-file" type="file" accept="application/json,.json" hidden>
-      </label>
+      <section class="settings-group">
+        <h3>Backup</h3>
+        <p class="hint">Your fridge is stored only on this device. Export a backup before clearing browser data or switching phones.</p>
+        <div class="btn-pair">
+          <button id="export-btn" class="btn"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Export backup</button>
+          <label class="btn file-btn"><svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>Import backup
+            <input id="import-file" class="visually-hidden" type="file" accept="application/json,.json">
+          </label>
+        </div>
+      </section>
 
-      <button id="settings-close" class="btn wide">Close</button>
+      <button id="settings-close" class="btn ghost">Close</button>
     </div>
   </dialog>
 

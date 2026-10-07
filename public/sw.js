@@ -4,7 +4,7 @@
 //
 // Bump CACHE whenever the list of cached files changes.
 
-const CACHE = 'smartfridge-v1';
+const CACHE = 'smartfridge-v2';
 const SHELL = [
   '/',
   '/styles.css',
@@ -19,6 +19,8 @@ const SHELL = [
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   '/icons/apple-touch-icon.png',
+  '/fonts/fraunces-latin-soft-normal.woff2',
+  '/fonts/nunito-latin-wght-normal.woff2',
 ];
 
 self.addEventListener('install', (event) => {
