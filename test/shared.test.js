@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { addDays, daysBetween, isValidDate, todayISO } from '../public/shared/dates.js';
 import { estimateDays, findFood, matchesKey } from '../public/shared/foods.js';
-import { parseReceiptWithRules } from '../public/shared/receipt.js';
+import { normalizeWithFoodList, parseReceiptWithRules } from '../public/shared/receipt.js';
 import { suggestRecipesOffline } from '../public/shared/recipes.js';
 import {
   ValidationError,
@@ -79,6 +79,26 @@ test('receipt rules: extracts generic food names and ignores the rest', () => {
 test('receipt rules: empty or junk text yields no items', () => {
   assert.deepEqual(parseReceiptWithRules(''), []);
   assert.deepEqual(parseReceiptWithRules('TOTAL 5.00\nTHANK YOU'), []);
+});
+
+test('normalizeWithFoodList: generic names and shelf lives for known foods, drops household goods', () => {
+  // What a 2B vision model actually returned for the test receipt: right items, raw names, "7 days" for all.
+  const modelOutput = ['org bananas', 'parm cheese', 'chkn brst bns', 'milk', 'eggs', 'folgers classic', 'baby spinach', 'paper towels', 'greek yogurt', 'salmon fillet'].map((name) => ({ name, days: 7 }));
+  assert.deepEqual(normalizeWithFoodList(modelOutput), [
+    { name: 'bananas', days: 5 },
+    { name: 'parmesan cheese', days: 60 },
+    { name: 'chicken', days: 3 },
+    { name: 'milk', days: 7 },
+    { name: 'eggs', days: 28 },
+    { name: 'coffee', days: 180 },
+    { name: 'spinach', days: 5 },
+    { name: 'yogurt', days: 14 },
+    { name: 'salmon', days: 2 },
+  ]);
+
+  // Unknown foods keep the model's name and days; duplicates collapse; junk is ignored.
+  assert.deepEqual(normalizeWithFoodList([{ name: 'Tahini 16OZ', days: 90 }, { name: 'tahini', days: 30 }, { name: '', days: 5 }, null, { name: 'Dish soap', days: 7 }]), [{ name: 'tahini', days: 90 }]);
+  assert.deepEqual(normalizeWithFoodList([]), []);
 });
 
 // ---- items -----------------------------------------------------------------

@@ -15,6 +15,30 @@ export function cleanReceiptLine(line) {
     .trim();
 }
 
+// Household goods that show up on grocery receipts. Used to drop non-food a small model let through.
+const NON_FOOD_ITEM = /\b(paper|towels?|tissues?|napkins?|soap|detergent|shampoo|conditioner|toothpaste|toothbrush|batter(?:y|ies)|foil|trash|garbage|diapers?|cleaner|sponges?|candles?|razors?|bags?|lotion|deodorant|vitamins?|dish)\b/;
+
+/**
+ * Tidy items a small model extracted from a receipt: swap in the app's generic name and
+ * shelf life for foods it knows ("chkn brst bns" -> chicken, 3 days), drop household goods,
+ * and de-duplicate. Foods it doesn't know keep the model's name and days.
+ * Input and output are [{ name, days }].
+ */
+export function normalizeWithFoodList(items) {
+  const seen = new Set();
+  const out = [];
+  for (const item of items) {
+    const cleaned = cleanReceiptLine(String(item?.name ?? ''));
+    if (cleaned.length < 2 || NON_FOOD_ITEM.test(cleaned)) continue;
+    const food = findFood(cleaned);
+    const name = food ? food.name : cleaned;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, days: food ? food.days : item.days });
+  }
+  return out;
+}
+
 /**
  * Offline receipt parser: keeps only lines that look like known foods and maps
  * them to a generic name + typical shelf life. Returns [{ name, days }].

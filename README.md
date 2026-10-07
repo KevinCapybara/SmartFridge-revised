@@ -40,7 +40,7 @@ npm install
 npm start
 ```
 
-Open http://localhost:3000. To try the AI features, copy `.env.example` to `.env` and fill in `ANTHROPIC_API_KEY`.
+Open http://localhost:3000. To try cloud AI, copy `.env.example` to `.env` and fill in a key; for free local AI, see "Free option" below. `npm run start:lan` makes the app reachable from your phone on the same Wi-Fi.
 
 ```bash
 npm test
@@ -73,16 +73,47 @@ In the app, **Settings > AI models** has two toggles, saved on your device:
 
 Defaults are the fastest, cheapest tier of each provider, with reasoning effort set to low, because both jobs are short and structured and the app is used from a phone. For richer recipes at some cost in speed, set `ANTHROPIC_MODEL=claude-sonnet-5-5` and/or `OPENAI_MODEL=gpt-6.1-sol`. Latency was chosen by model tier, not benchmarked.
 
-A provider appears only if its key is set on the server. If both are set, Claude is the default until you choose. Receipt and recipe results say which model produced them. If an AI call fails, the app falls back to the built-in food list / recipe book and says so. Prices are from the vendors' pricing pages as of October 2026; the OpenAI model names are the newest listed on [OpenAI's model pricing page](https://developers.openai.com/api/docs/pricing), so check them before relying on the numbers.
+A provider appears only if it is set up on the server: its key is set, or (for the local option) Ollama is running with the models downloaded. The first available one in the order Claude, OpenAI, Local is the default until you choose. Receipt and recipe results say which model produced them. If an AI call fails, the app falls back to the built-in food list / recipe book and says so. Prices are from the vendors' pricing pages as of October 2026; the OpenAI model names are the newest listed on [OpenAI's model pricing page](https://developers.openai.com/api/docs/pricing), so check them before relying on the numbers.
 
 OpenAI requests are sent with `store: false`, so OpenAI doesn't keep your receipts.
 
+### Free option: open-source models on your own computer (no API key)
+
+Pick **Local open-source** in Settings > AI models. It runs through [Ollama](https://ollama.com), costs nothing, needs no account or key, and your receipts never leave your machine.
+
+| Job | Model | Size | Why |
+| --- | --- | --- | --- |
+| Receipt photos | `qwen3-vl:2b-instruct` (Qwen3-VL 2B) | 1.9 GB | Vision model with strong OCR, reads the photo directly |
+| Recipes | `qwen3:4b-instruct` (Qwen3 4B) | 2.5 GB | Small, fast text model |
+
+Both were chosen for a CPU-only laptop (tested on an Intel Core 7 150U, 16 GB RAM, no GPU). Use the `-instruct` tags: the plain `qwen3-vl:2b` and `qwen3:4b` tags are *thinking* models that spend all their time reasoning out loud and return nothing usable.
+
+**Set up (Windows, PowerShell):**
+
+1. Install Ollama from [ollama.com](https://ollama.com/download) (or unzip the portable build from its [GitHub releases](https://github.com/ollama/ollama/releases)) and start it. The installer runs it in the background; the portable build needs `ollama serve`.
+2. Download the models once:
+   ```bash
+   ollama pull qwen3-vl:2b-instruct
+   ollama pull qwen3:4b-instruct
+   ```
+3. Run the app on the same computer: `npm start`. Settings > AI models now offers the local models, and when no API key is set it is picked automatically.
+
+**Use it from your phone:** the local model runs on your computer, so Vercel can't reach it (Vercel's servers can't see your PC). Instead, run `npm run start:lan`, which prints an address like `http://192.168.1.20:3000`. Open that on your phone while it's on the same Wi-Fi. Allow Node through the Windows firewall when asked. Because that address is plain `http`, iOS adds it to the Home Screen as a shortcut, but installable-app features (offline mode) need HTTPS, for example via a free [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) or [Tailscale](https://tailscale.com). Set `APP_ACCESS_CODE` if others share your network.
+
+**Speed (measured on that laptop, CPU only):** about 60 seconds to read a receipt photo and about 55 seconds to write recipes (the first request is slower while the model loads). Cloud models take a few seconds, so use those when you can and the local ones when you can't.
+
+**Accuracy:** on a tilted test receipt with 9 foods and 4 non-food lines, the 2B model read every food correctly. It is weak at judgment (it won't expand "CHKN BRST" or estimate shelf life), so the app passes its output through the built-in food list for generic names, shelf lives and dropping things like paper towels. Foods the list doesn't know keep the model's name and a default shelf life, which is why the review step matters. The 4B recipe model usually follows the fridge contents and expiry order but sometimes suggests odd combinations. For better results, try `LOCAL_RECEIPT_MODEL=qwen3-vl:4b-instruct` (3.3 GB, slower).
+
+**Other OpenAI-compatible hosts** are not supported here: the local option speaks Ollama's own API. Point `LOCAL_LLM_URL` at an Ollama running on another machine (for example a home server) if you have one.
+
+**If `ollama pull` fails** with a timeout to an `r2.cloudflarestorage.com` IPv6 address, your network can't reach Ollama's CDN over IPv6. Retrying, or downloading the failing file over IPv4 (`curl -4 -L`, from `registry.ollama.ai/v2/library/<model>/blobs/sha256:<hash>`, into `~/.ollama/models/blobs/sha256-<hash>`) and re-running the pull, fixes it.
+
 ### How receipt photos are read (hybrid)
 
-1. **AI on** (default when a provider is unlocked): the phone shrinks the photo to a JPEG of roughly 0.3-1 MB, and the chosen model reads it directly with vision. Most accurate on crumpled or faded receipts.
+1. **AI on** (default when a provider is unlocked): the phone shrinks the photo to a JPEG of roughly 0.3-1 MB (smaller for the local model), and the chosen model reads it directly with vision. Most accurate on crumpled or faded receipts.
 2. **AI off, locked, offline, the call fails, or you turned off "Read receipt photos with AI" in Settings:** the photo is read on-device with OCR (Tesseract.js), you review the text, then "Find the food" parses it (with AI if available, otherwise the built-in food list).
 
-With AI photo reading on, the photo is sent to the provider you chose (the app never stores it). Turn the setting off to keep photos on the device.
+With a cloud provider, the photo is sent to it (the app never stores it). With the local option it goes only to Ollama on your own computer. Turn "Read receipt photos with AI" off in Settings to keep photos on the phone and use on-device OCR.
 
 ### iPhone notes
 
@@ -106,7 +137,7 @@ public/              static site (what Vercel serves)
     dates.js
 api/                 Vercel serverless functions (thin wrappers)
 lib/                 server code: api.js (handlers, access gate, provider choice), runtime.js,
-                     ai.js (Claude), openai.js (GPT), prompts.js (shared prompts/schemas), sanitize.js
+                     ai.js (Claude), openai.js (GPT), local.js (Ollama), prompts.js (shared prompts/schemas), sanitize.js
 server.js            local dev server (not used on Vercel)
 scripts/make-icons.mjs   regenerates public/icons/*.png
 test/                node:test suites

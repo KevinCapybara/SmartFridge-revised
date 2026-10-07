@@ -2,6 +2,7 @@
 // Not used in production - Vercel serves public/ and api/ directly.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -37,16 +38,39 @@ app.use((err, req, res, next) => {
 
 const port = Number(process.env.PORT) || 3000;
 // Localhost only by default: there is no login, so don't expose it to the network unless asked.
-const host = process.env.HOST || '127.0.0.1';
+// `npm run start:lan` (or HOST=0.0.0.0) makes it reachable from your phone on the same Wi-Fi.
+const lan = process.argv.includes('--lan');
+const host = process.env.HOST || (lan ? '0.0.0.0' : '127.0.0.1');
+
+/** This computer's private-network addresses, for opening the app from a phone. */
+function lanAddresses() {
+  return Object.values(os.networkInterfaces())
+    .flat()
+    .filter((i) => i && i.family === 'IPv4' && !i.internal)
+    .map((i) => i.address);
+}
 
 app.listen(port, host, () => {
   const { providers, disabledReason } = resolveConfig();
   console.log(`SmartFridge (revised) running at http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);
+  if (host === '0.0.0.0') {
+    for (const ip of lanAddresses()) console.log(`  On your phone (same Wi-Fi): http://${ip}:${port}`);
+    if (!process.env.APP_ACCESS_CODE) console.log('  Anyone on this network can use the app. Set APP_ACCESS_CODE in .env to require a code for AI features.');
+  }
   const names = Object.keys(providers);
   if (names.length === 0) {
-    console.log(`AI features off (${disabledReason}). Set ANTHROPIC_API_KEY and/or OPENAI_API_KEY in .env to enable them; the built-in food list and recipes still work.`);
+    console.log(`AI features off (${disabledReason}). Set a key in .env, or run Ollama; the built-in food list and recipes still work.`);
   }
   for (const name of names) {
-    console.log(`AI provider "${name}" on (receipts: ${providers[name].models.receipt}, recipes: ${providers[name].models.recipes})`);
+    console.log(`AI provider "${name}" configured (receipts: ${providers[name].models.receipt}, recipes: ${providers[name].models.recipes})`);
+  }
+  if (providers.local) {
+    providers.local.status().then((s) =>
+      console.log(
+        !s.reachable
+          ? 'Local models: Ollama not running (start it and the option appears in Settings > AI models).'
+          : `Local models: Ollama is up. Receipts model ${s.ready.receipt ? 'ready' : `missing (ollama pull ${providers.local.models.receipt})`}, recipes model ${s.ready.recipes ? 'ready' : `missing (ollama pull ${providers.local.models.recipes})`}.`,
+      ),
+    );
   }
 });

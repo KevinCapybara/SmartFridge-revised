@@ -87,13 +87,22 @@ function setPref(key, value) {
 const ai = { available: false, needsCode: false, codeOk: null, providers: {}, defaultProvider: null };
 const aiUsable = () => ai.available && (!ai.needsCode || ai.codeOk);
 
-const PROVIDER_NAMES = ['anthropic', 'openai'];
-const PROVIDER_LABELS = { anthropic: 'Claude', openai: 'OpenAI GPT' };
+const PROVIDER_NAMES = ['anthropic', 'openai', 'local'];
+const PROVIDER_LABELS = { anthropic: 'Claude', openai: 'OpenAI GPT', local: 'Local open-source' };
+const HOW_TO_ENABLE = {
+  anthropic: 'set ANTHROPIC_API_KEY on the server',
+  openai: 'set OPENAI_API_KEY on the server',
+  local: 'run Ollama on the computer that runs this app',
+};
 
-/** Which provider to use for a feature ('receipt' | 'recipes'): the saved choice if the server offers it, else the server default. */
+/** Can this provider serve this feature right now? (A local model must be downloaded.) */
+const providerReady = (name, feature) => Boolean(ai.providers[name]) && ai.providers[name].ready?.[feature] !== false;
+
+/** Which provider to use for a feature ('receipt' | 'recipes'): the saved choice if usable, else the first usable one. */
 function chosenProvider(feature) {
   const saved = getPref(`smartfridge.provider.${feature}`);
-  return ai.providers[saved] ? saved : ai.defaultProvider;
+  if (providerReady(saved, feature)) return saved;
+  return PROVIDER_NAMES.find((name) => providerReady(name, feature)) ?? null;
 }
 
 class AiError extends Error {
@@ -148,19 +157,31 @@ function renderModelPickers() {
     select.replaceChildren(
       ...PROVIDER_NAMES.map((name) => {
         const info = ai.providers[name];
-        const label = info ? `${PROVIDER_LABELS[name]} · ${info.models[modelKey]}` : `${PROVIDER_LABELS[name]} · not set up on the server`;
-        return h('option', { value: name, disabled: !info }, label);
+        const base = PROVIDER_LABELS[name];
+        const label = !info
+          ? `${base} · ${name === 'local' ? 'Ollama not running' : 'not set up on the server'}`
+          : providerReady(name, feature)
+            ? `${base} · ${info.models[modelKey]}`
+            : `${base} · ${info.models[modelKey]} (not downloaded)`;
+        return h('option', { value: name, disabled: !providerReady(name, feature) }, label);
       }),
     );
     select.value = chosenProvider(feature) ?? '';
-    select.disabled = !aiUsable() || Object.keys(ai.providers).length < 2;
+    select.disabled = !aiUsable() || PROVIDER_NAMES.filter((n) => providerReady(n, feature)).length < 2;
   }
   const missing = PROVIDER_NAMES.filter((n) => !ai.providers[n]);
+  const notDownloaded = Object.entries(ai.providers).flatMap(([name, info]) =>
+    MODEL_PICKERS.filter(({ modelKey }) => info.ready?.[modelKey] === false).map(({ modelKey }) => `ollama pull ${info.models[modelKey]}`),
+  );
   $('model-hint').textContent = !ai.available
     ? ''
-    : missing.length
-      ? `Add ${missing.map((n) => (n === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY')).join(' and ')} on the server to enable ${PROVIDER_LABELS[missing[0]]}.`
-      : 'Your choice is saved on this device.';
+    : [
+        notDownloaded.length ? `Download the missing local model${notDownloaded.length > 1 ? 's' : ''}: ${notDownloaded.join(' and ')}.` : '',
+        missing.length ? `Not available: ${missing.map((n) => `${PROVIDER_LABELS[n]} (${HOW_TO_ENABLE[n]})`).join('; ')}.` : '',
+        !notDownloaded.length && !missing.length ? 'Your choice is saved on this device.' : '',
+      ]
+        .filter(Boolean)
+        .join(' ');
   renderVisionNote();
 }
 
@@ -379,9 +400,11 @@ const MAX_IMAGE_BASE64_CHARS = 3_900_000; // keep under the server's / Vercel's 
  * Shrink a phone photo to a JPEG small enough to upload (a raw photo is 3-10 MB).
  * Tries progressively smaller sizes until the base64 fits. Returns base64 without a data: prefix.
  */
-async function photoToBase64Jpeg(file) {
+async function photoToBase64Jpeg(file, { small = false } = {}) {
   const img = await loadImage(file); // the browser applies the photo's EXIF rotation
-  for (const [maxSide, quality] of [[2000, 0.8], [1600, 0.75], [1200, 0.7], [900, 0.6]]) {
+  // A local CPU model's time grows with image size, so give it a smaller picture.
+  const sizes = small ? [[1280, 0.8], [1024, 0.75], [800, 0.7]] : [[2000, 0.8], [1600, 0.75], [1200, 0.7], [900, 0.6]];
+  for (const [maxSide, quality] of sizes) {
     const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
@@ -408,9 +431,12 @@ async function photoToBase64Jpeg(file) {
 const visionOn = () => aiUsable() && getPref('smartfridge.visionOff') !== '1';
 
 function renderVisionNote() {
-  $('vision-note').textContent = visionOn()
-    ? `The photo is sent to ${PROVIDER_LABELS[chosenProvider('receipt')] ?? 'the AI provider'} to be read; this app does not keep it. Turn this off in Settings to read photos on this device instead.`
-    : 'The photo is read on this device and never uploaded.';
+  const provider = chosenProvider('receipt');
+  $('vision-note').textContent = !visionOn()
+    ? 'The photo is read on this device and never uploaded.'
+    : provider === 'local'
+      ? 'The photo is read by an open-source model running on your own computer, so it never goes to a cloud service. Expect it to take a minute or two.'
+      : `The photo is sent to ${PROVIDER_LABELS[provider] ?? 'the AI provider'} to be read; this app does not keep it. Turn this off in Settings to read photos on this device instead.`;
 }
 
 let scanning = false;
@@ -437,10 +463,11 @@ $('receipt-file').addEventListener('change', async (e) => {
     // 1. Hybrid path: let the AI model read the photo directly (most accurate).
     if (visionOn()) {
       progress.removeAttribute('value'); // indeterminate
-      status.textContent = 'Reading receipt with AI…';
+      const isLocal = chosenProvider('receipt') === 'local';
+      status.textContent = isLocal ? 'Reading receipt with the local model - this can take a minute or two…' : 'Reading receipt with AI…';
       let warning = null;
       try {
-        const base64 = await photoToBase64Jpeg(file);
+        const base64 = await photoToBase64Jpeg(file, { small: isLocal });
         const { result, warning: w } = await tryAi('/api/receipt/scan', { image: base64, mediaType: 'image/jpeg' }, 'receipt');
         if (result) {
           status.textContent = 'Done. Check the list below.';
@@ -563,7 +590,7 @@ $('recipe-btn').addEventListener('click', async () => {
   }
 
   btn.disabled = true;
-  status.textContent = 'Finding recipes…';
+  status.textContent = chosenProvider('recipes') === 'local' ? 'Finding recipes with the local model - this can take a minute…' : 'Finding recipes…';
   try {
     const { result, warning } = await tryAi('/api/recipes', { items }, 'recipes');
     const recipes = result?.recipes ?? suggestRecipesOffline(items);

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApi, MAX_IMAGE_BASE64_CHARS } from '../lib/api.js';
 import { createAi } from '../lib/ai.js';
+import { createLocal } from '../lib/local.js';
 import { createOpenAi } from '../lib/openai.js';
 import { resolveConfig } from '../lib/runtime.js';
 import { sanitizeParsedItems, sanitizeRecipes } from '../lib/sanitize.js';
@@ -21,27 +22,29 @@ const fakeProvider = (tag, overrides = {}) => ({
 });
 
 const post = (body, headers = {}) => ({ method: 'POST', headers, body });
+const get = (headers = {}) => ({ method: 'GET', headers });
 const one = (overrides) => ({ anthropic: fakeProvider('claude', overrides) });
+const READY = { receipt: true, recipes: true };
 
-test('health reports providers and never leaks the access code', () => {
-  const off = createApi({ providers: {}, disabledReason: 'no_api_key' }).health({ method: 'GET', headers: {} });
-  assert.deepEqual(off.body, { ok: true, ai: false, needsCode: false, codeOk: null, providers: {}, defaultProvider: null, reason: 'no_api_key' });
+test('health reports providers and never leaks the access code', async () => {
+  const off = await createApi({ providers: {}, disabledReason: 'no_provider' }).health(get());
+  assert.deepEqual(off.body, { ok: true, ai: false, needsCode: false, codeOk: null, providers: {}, defaultProvider: null, reason: 'no_provider' });
 
-  const both = createApi({ providers: { openai: fakeProvider('gpt'), anthropic: fakeProvider('claude') } }).health({ method: 'GET', headers: {} });
+  const both = await createApi({ providers: { openai: fakeProvider('gpt'), anthropic: fakeProvider('claude') } }).health(get());
   assert.deepEqual(Object.keys(both.body.providers), ['anthropic', 'openai']); // fixed order
   assert.equal(both.body.defaultProvider, 'anthropic');
-  assert.deepEqual(both.body.providers.openai.models, { receipt: 'gpt-receipt-model', recipes: 'gpt-recipe-model' });
+  assert.deepEqual(both.body.providers.openai, { models: { receipt: 'gpt-receipt-model', recipes: 'gpt-recipe-model' }, ready: READY });
 
-  const onlyOpenAi = createApi({ providers: { openai: fakeProvider('gpt') } }).health({ method: 'GET', headers: {} });
+  const onlyOpenAi = await createApi({ providers: { openai: fakeProvider('gpt') } }).health(get());
   assert.equal(onlyOpenAi.body.defaultProvider, 'openai');
 
   const api = createApi({ providers: one(), accessCode: 'sesame' });
-  assert.equal(api.health({ method: 'GET', headers: {} }).body.codeOk, false);
-  assert.equal(api.health({ method: 'GET', headers: { 'x-access-code': 'nope' } }).body.codeOk, false);
-  const ok = api.health({ method: 'GET', headers: { 'x-access-code': 'sesame' } });
+  assert.equal((await api.health(get())).body.codeOk, false);
+  assert.equal((await api.health(get({ 'x-access-code': 'nope' }))).body.codeOk, false);
+  const ok = await api.health(get({ 'x-access-code': 'sesame' }));
   assert.equal(ok.body.codeOk, true);
   assert.ok(!JSON.stringify(ok.body).includes('sesame'));
-  assert.equal(api.health({ method: 'POST', headers: {} }).status, 405);
+  assert.equal((await api.health({ method: 'POST', headers: {} })).status, 405);
 });
 
 test('access code gate: missing, wrong, and right codes', async () => {
@@ -106,6 +109,46 @@ test('provider choice: caller picks per request, default otherwise, bad values r
   // Recipes choose independently.
   const recipe = await api.recipes(post({ items: [{ name: 'eggs', daysLeft: 1 }], provider: 'openai' }));
   assert.deepEqual([recipe.status, recipe.body.provider, recipe.body.model], [200, 'openai', 'gpt-recipe-model']);
+});
+
+test('local provider: probed live, offered only while reachable, and per-model readiness is honoured', async () => {
+  let state = { reachable: false, ready: { receipt: false, recipes: false } };
+  const local = fakeProvider('ollama', { status: async () => state });
+  const api = createApi({ providers: { local }, disabledReason: 'no_provider' });
+
+  // Ollama not running: not offered, requests get 503.
+  const down = await api.health(get());
+  assert.deepEqual([down.body.ai, down.body.providers, down.body.defaultProvider], [false, {}, null]);
+  assert.equal((await api.parseReceipt(post({ text: 'milk' }))).status, 503);
+  assert.equal((await api.parseReceipt(post({ text: 'milk', provider: 'local' }))).body.code, 'provider_unavailable');
+
+  // Running, but only the recipe model is downloaded.
+  state = { reachable: true, ready: { receipt: false, recipes: true } };
+  const partial = await api.health(get());
+  assert.equal(partial.body.ai, true);
+  assert.deepEqual(partial.body.providers.local.ready, { receipt: false, recipes: true });
+  const notReady = await api.parseReceipt(post({ text: 'milk', provider: 'local' }));
+  assert.equal(notReady.status, 400);
+  assert.equal(notReady.body.code, 'model_not_ready');
+  assert.ok(notReady.body.error.includes('ollama pull ollama-receipt-model'));
+  assert.equal((await api.parseReceipt(post({ text: 'milk' }))).status, 503); // default skips providers whose model isn't ready
+  assert.equal((await api.recipes(post({ items: [{ name: 'eggs', daysLeft: 1 }] }))).status, 200);
+
+  // Everything downloaded: used as the default when it is the only provider.
+  state = { reachable: true, ready: READY };
+  const ok = await api.parseReceipt(post({ text: 'milk' }));
+  assert.deepEqual([ok.status, ok.body.provider], [200, 'local']);
+});
+
+test('default provider skips a local model that is not ready in favour of a ready cloud one', async () => {
+  const api = createApi({
+    providers: {
+      anthropic: fakeProvider('claude'),
+      local: fakeProvider('ollama', { status: async () => ({ reachable: true, ready: { receipt: true, recipes: true } }) }),
+    },
+  });
+  assert.equal((await api.parseReceipt(post({ text: 'milk' }))).body.provider, 'anthropic'); // order: anthropic first
+  assert.equal((await api.parseReceipt(post({ text: 'milk', provider: 'local' }))).body.provider, 'local');
 });
 
 test('scanReceipt: reads a photo, validates the upload, honours provider choice', async () => {
@@ -182,9 +225,11 @@ test('sanitize helpers cope with garbage', () => {
   assert.deepEqual(sanitizeRecipes([{ title: 'T', steps: [1, 'ok', ' '] }])[0].steps, ['ok']);
 });
 
-test('resolveConfig: key handling, including the Vercel safety rule', () => {
-  assert.equal(resolveConfig({}).disabledReason, 'no_api_key');
-  assert.deepEqual(resolveConfig({}).providers, {});
+test('resolveConfig: providers from the environment, including the Vercel safety rule', () => {
+  const off = { LOCAL_LLM: 'off' };
+
+  assert.equal(resolveConfig(off).disabledReason, 'no_provider');
+  assert.deepEqual(resolveConfig(off).providers, {});
 
   // Public deployment with a key but no access code: refuse to use any key.
   for (const key of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY']) {
@@ -192,14 +237,20 @@ test('resolveConfig: key handling, including the Vercel safety rule', () => {
     assert.deepEqual(exposed.providers, {});
     assert.equal(exposed.disabledReason, 'access_code_required');
   }
+  assert.equal(resolveConfig({ VERCEL: '1' }).disabledReason, 'no_provider'); // nothing to protect
 
+  // On Vercel with a code: cloud providers on; local (Ollama) needs an explicit URL.
   const locked = resolveConfig({ ANTHROPIC_API_KEY: 'sk-ant-test', OPENAI_API_KEY: 'sk-test', VERCEL: '1', APP_ACCESS_CODE: 'sesame' });
   assert.deepEqual(Object.keys(locked.providers), ['anthropic', 'openai']);
   assert.equal(locked.accessCode, 'sesame');
+  const remote = resolveConfig({ VERCEL: '1', APP_ACCESS_CODE: 'sesame', LOCAL_LLM_URL: 'https://ollama.example.com' });
+  assert.deepEqual(Object.keys(remote.providers), ['local']);
 
-  // Local dev works without a code, and each key enables only its own provider.
-  assert.deepEqual(Object.keys(resolveConfig({ ANTHROPIC_API_KEY: 'sk-ant-test' }).providers), ['anthropic']);
-  assert.deepEqual(Object.keys(resolveConfig({ OPENAI_API_KEY: 'sk-test' }).providers), ['openai']);
+  // Local dev: each key enables only its own provider; Ollama needs no key and is on by default.
+  assert.deepEqual(Object.keys(resolveConfig({ ...off, ANTHROPIC_API_KEY: 'sk-ant-test' }).providers), ['anthropic']);
+  assert.deepEqual(Object.keys(resolveConfig({ ...off, OPENAI_API_KEY: 'sk-test' }).providers), ['openai']);
+  assert.deepEqual(Object.keys(resolveConfig({}).providers), ['local']);
+  assert.deepEqual(Object.keys(resolveConfig({ ANTHROPIC_API_KEY: 'sk-ant-test', OPENAI_API_KEY: 'sk-test' }).providers), ['anthropic', 'openai', 'local']);
 });
 
 // ---- Anthropic request shape -----------------------------------------------
@@ -337,4 +388,90 @@ test('createOpenAi: env overrides, recipes use the stronger model, errors throw'
   await assert.rejects(cut.parseReceipt('x'), /cut off/);
   const none = createOpenAi({ client: fakeOpenAiClient({ status: 'completed', output: [] }), env: {} });
   await assert.rejects(none.parseReceipt('x'), /no text/);
+});
+
+// ---- Local (Ollama) --------------------------------------------------------
+
+/** A fake Ollama: records /api/chat bodies, serves /api/tags. */
+function fakeOllama({ tags = ['qwen3-vl:2b-instruct', 'qwen3:4b-instruct'], chat } = {}) {
+  const calls = { chat: [], tags: 0 };
+  const fetchImpl = async (url, opts = {}) => {
+    const json = (status, body) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
+    if (url.endsWith('/api/tags')) {
+      calls.tags += 1;
+      return json(200, { models: tags.map((name) => ({ name })) });
+    }
+    if (url.endsWith('/api/chat')) {
+      calls.chat.push({ url, body: JSON.parse(opts.body) });
+      return chat ? chat(calls.chat.at(-1).body) : json(200, { done_reason: 'stop', message: { content: JSON.stringify({ items: [{ name: 'milk', days: 7 }] }) } });
+    }
+    throw new Error(`unexpected url ${url}`);
+  };
+  return { calls, fetchImpl };
+}
+
+test('createLocal: off switches, Vercel rule, instruct defaults', () => {
+  assert.equal(createLocal({ env: { LOCAL_LLM: 'off' } }), null);
+  assert.equal(createLocal({ env: { LOCAL_LLM_URL: 'off' } }), null);
+  assert.equal(createLocal({ env: { VERCEL: '1' } }), null); // no Ollama next to a Vercel function
+  assert.ok(createLocal({ env: { VERCEL: '1', LOCAL_LLM_URL: 'https://ollama.example.com' } }));
+
+  const local = createLocal({ env: {} });
+  // The "-instruct" builds matter: plain qwen3-vl:2b / qwen3:4b are thinking models that burn their token budget.
+  assert.deepEqual(local.models, { receipt: 'qwen3-vl:2b-instruct', recipes: 'qwen3:4b-instruct' });
+  assert.deepEqual(createLocal({ env: { LOCAL_RECEIPT_MODEL: 'a', LOCAL_MODEL: 'b' } }).models, { receipt: 'a', recipes: 'b' });
+});
+
+test('createLocal: status reports reachability and which models are downloaded (cached briefly)', async () => {
+  const ollama = fakeOllama({ tags: ['qwen3-vl:2b-instruct', 'qwen3:latest'] });
+  const local = createLocal({ env: {}, fetchImpl: ollama.fetchImpl });
+  assert.deepEqual(await local.status(), { reachable: true, ready: { receipt: true, recipes: false } });
+  await local.status();
+  assert.equal(ollama.calls.tags, 1); // second call served from cache
+
+  const latest = createLocal({ env: { LOCAL_MODEL: 'qwen3' }, fetchImpl: ollama.fetchImpl });
+  assert.equal((await latest.status()).ready.recipes, true); // "qwen3" matches "qwen3:latest"
+
+  const down = createLocal({ env: {}, fetchImpl: async () => { throw new Error('ECONNREFUSED'); } });
+  assert.deepEqual(await down.status(), { reachable: false, ready: { receipt: false, recipes: false } });
+});
+
+test('createLocal: sends schema-constrained, deterministic chat requests; photos go in images[]', async () => {
+  const ollama = fakeOllama();
+  const local = createLocal({ env: { LOCAL_LLM_URL: 'http://box:11434/' }, fetchImpl: ollama.fetchImpl });
+
+  assert.deepEqual(await local.parseReceipt('MILK 3.99'), [{ name: 'milk', days: 7 }]);
+  assert.deepEqual(await local.scanReceipt({ base64: 'QUJD', mediaType: 'image/jpeg' }), [{ name: 'milk', days: 7 }]);
+
+  const [text, photo] = ollama.calls.chat;
+  assert.equal(text.url, 'http://box:11434/api/chat'); // trailing slash trimmed
+  assert.equal(text.body.model, 'qwen3-vl:2b-instruct');
+  assert.equal(text.body.stream, false);
+  assert.equal(text.body.think, false);
+  assert.equal(text.body.keep_alive, '30m');
+  assert.equal(text.body.format.type, 'object'); // JSON schema constrains the output
+  assert.equal(text.body.options.temperature, 0);
+  assert.ok(text.body.options.num_predict > 0);
+  assert.equal(text.body.messages[0].role, 'system');
+  assert.ok(text.body.messages[0].content.includes('"items"')); // literal output example for small models
+  assert.ok(text.body.messages[1].content.includes('MILK 3.99'));
+  assert.equal(text.body.messages[1].images, undefined);
+  assert.deepEqual(photo.body.messages[1].images, ['QUJD']);
+});
+
+test('createLocal: recipes use the recipe model; failures throw clear errors', async () => {
+  const recipes = { recipes: [{ title: 'Omelette', time_minutes: 10, uses: ['eggs'], extras: [], steps: ['Cook'] }] };
+  const ollama = fakeOllama({ chat: () => ({ ok: true, status: 200, json: async () => ({ done_reason: 'stop', message: { content: JSON.stringify(recipes) } }) }) });
+  const local = createLocal({ env: {}, fetchImpl: ollama.fetchImpl });
+  assert.deepEqual(await local.suggestRecipes([{ name: 'eggs', daysLeft: 1 }]), recipes.recipes);
+  assert.equal(ollama.calls.chat[0].body.model, 'qwen3:4b-instruct');
+  assert.ok(ollama.calls.chat[0].body.messages[1].content.includes('eggs: expires in 1 day'));
+
+  const reply = (status, body) => fakeOllama({ chat: () => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) }) });
+  const httpErr = createLocal({ env: {}, fetchImpl: reply(500, { error: 'model failed to load' }).fetchImpl });
+  await assert.rejects(httpErr.parseReceipt('x'), /Ollama returned 500.*model failed to load/);
+  const cut = createLocal({ env: {}, fetchImpl: reply(200, { done_reason: 'length', message: { content: '{"items":[' } }).fetchImpl });
+  await assert.rejects(cut.parseReceipt('x'), /cut off/);
+  const empty = createLocal({ env: {}, fetchImpl: reply(200, { done_reason: 'stop', message: { content: '' } }).fetchImpl });
+  await assert.rejects(empty.parseReceipt('x'), /no text/);
 });
