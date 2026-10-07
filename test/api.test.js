@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApi } from '../lib/api.js';
 import { createAi } from '../lib/ai.js';
+import { createOpenAi } from '../lib/openai.js';
 import { resolveConfig } from '../lib/runtime.js';
 import { sanitizeParsedItems, sanitizeRecipes } from '../lib/sanitize.js';
 
-const fakeAi = (overrides = {}) => ({
-  models: { receipt: 'fake-receipt-model', recipes: 'fake-recipe-model' },
+const fakeProvider = (tag, overrides = {}) => ({
+  models: { receipt: `${tag}-receipt-model`, recipes: `${tag}-recipe-model` },
   parseReceipt: async () => [
     { name: ' Milk ', days: 7.4 },
     { name: 'milk', days: 3 }, // duplicate after normalising
@@ -19,12 +20,21 @@ const fakeAi = (overrides = {}) => ({
 });
 
 const post = (body, headers = {}) => ({ method: 'POST', headers, body });
+const one = (overrides) => ({ anthropic: fakeProvider('claude', overrides) });
 
-test('health reports AI state and never leaks the access code', () => {
-  const off = createApi({ ai: null, disabledReason: 'no_api_key' }).health({ method: 'GET', headers: {} });
-  assert.deepEqual(off.body, { ok: true, ai: false, needsCode: false, codeOk: null, models: null, reason: 'no_api_key' });
+test('health reports providers and never leaks the access code', () => {
+  const off = createApi({ providers: {}, disabledReason: 'no_api_key' }).health({ method: 'GET', headers: {} });
+  assert.deepEqual(off.body, { ok: true, ai: false, needsCode: false, codeOk: null, providers: {}, defaultProvider: null, reason: 'no_api_key' });
 
-  const api = createApi({ ai: fakeAi(), accessCode: 'sesame' });
+  const both = createApi({ providers: { openai: fakeProvider('gpt'), anthropic: fakeProvider('claude') } }).health({ method: 'GET', headers: {} });
+  assert.deepEqual(Object.keys(both.body.providers), ['anthropic', 'openai']); // fixed order
+  assert.equal(both.body.defaultProvider, 'anthropic');
+  assert.deepEqual(both.body.providers.openai.models, { receipt: 'gpt-receipt-model', recipes: 'gpt-recipe-model' });
+
+  const onlyOpenAi = createApi({ providers: { openai: fakeProvider('gpt') } }).health({ method: 'GET', headers: {} });
+  assert.equal(onlyOpenAi.body.defaultProvider, 'openai');
+
+  const api = createApi({ providers: one(), accessCode: 'sesame' });
   assert.equal(api.health({ method: 'GET', headers: {} }).body.codeOk, false);
   assert.equal(api.health({ method: 'GET', headers: { 'x-access-code': 'nope' } }).body.codeOk, false);
   const ok = api.health({ method: 'GET', headers: { 'x-access-code': 'sesame' } });
@@ -34,7 +44,7 @@ test('health reports AI state and never leaks the access code', () => {
 });
 
 test('access code gate: missing, wrong, and right codes', async () => {
-  const api = createApi({ ai: fakeAi(), accessCode: 'sesame' });
+  const api = createApi({ providers: one(), accessCode: 'sesame' });
   const body = { text: 'MILK 3.99' };
 
   const missing = await api.parseReceipt(post(body));
@@ -50,13 +60,15 @@ test('access code gate: missing, wrong, and right codes', async () => {
 });
 
 test('parseReceipt: sanitises model output and validates input', async () => {
-  const api = createApi({ ai: fakeAi() });
+  const api = createApi({ providers: one() });
   const ok = await api.parseReceipt(post({ text: 'MILK 3.99\nEGGS 2.99' }));
   assert.equal(ok.status, 200);
   assert.deepEqual(ok.body.items, [
     { name: 'milk', days: 7 },
     { name: 'eggs', days: 3650 },
   ]);
+  assert.equal(ok.body.provider, 'anthropic');
+  assert.equal(ok.body.model, 'claude-receipt-model');
 
   assert.equal((await api.parseReceipt(post({}))).status, 400);
   assert.equal((await api.parseReceipt(post({ text: '   ' }))).status, 400);
@@ -64,16 +76,47 @@ test('parseReceipt: sanitises model output and validates input', async () => {
   assert.equal((await api.parseReceipt({ method: 'GET', headers: {}, body: undefined })).status, 405);
 });
 
+test('provider choice: caller picks per request, default otherwise, bad values rejected', async () => {
+  const calls = [];
+  const api = createApi({
+    providers: {
+      anthropic: fakeProvider('claude', { parseReceipt: async () => (calls.push('claude'), [{ name: 'milk', days: 7 }]) }),
+      openai: fakeProvider('gpt', { parseReceipt: async () => (calls.push('gpt'), [{ name: 'milk', days: 7 }]) }),
+    },
+  });
+
+  const viaGpt = await api.parseReceipt(post({ text: 'milk', provider: 'openai' }));
+  assert.equal(viaGpt.status, 200);
+  assert.deepEqual([viaGpt.body.provider, viaGpt.body.model], ['openai', 'gpt-receipt-model']);
+
+  const viaDefault = await api.parseReceipt(post({ text: 'milk' }));
+  assert.equal(viaDefault.body.provider, 'anthropic');
+  assert.deepEqual(calls, ['gpt', 'claude']);
+
+  assert.equal((await api.parseReceipt(post({ text: 'milk', provider: 'nonsense' }))).status, 400);
+  assert.equal((await api.parseReceipt(post({ text: 'milk', provider: 42 }))).status, 400);
+
+  // Asking for a provider the server doesn't have is a clear error, not a silent switch.
+  const claudeOnly = createApi({ providers: one() });
+  const missing = await claudeOnly.parseReceipt(post({ text: 'milk', provider: 'openai' }));
+  assert.equal(missing.status, 400);
+  assert.equal(missing.body.code, 'provider_unavailable');
+
+  // Recipes choose independently.
+  const recipe = await api.recipes(post({ items: [{ name: 'eggs', daysLeft: 1 }], provider: 'openai' }));
+  assert.deepEqual([recipe.status, recipe.body.provider, recipe.body.model], [200, 'openai', 'gpt-recipe-model']);
+});
+
 test('parseReceipt: 503 without AI, 502 when the model call fails', async () => {
-  assert.equal((await createApi({ ai: null }).parseReceipt(post({ text: 'milk' }))).status, 503);
-  const failing = createApi({ ai: fakeAi({ parseReceipt: async () => { throw new Error('boom'); } }) });
+  assert.equal((await createApi({ providers: {} }).parseReceipt(post({ text: 'milk' }))).status, 503);
+  const failing = createApi({ providers: one({ parseReceipt: async () => { throw new Error('boom'); } }) });
   const res = await failing.parseReceipt(post({ text: 'milk' }));
   assert.equal(res.status, 502);
   assert.ok(!JSON.stringify(res.body).includes('boom')); // internal error text is not leaked
 });
 
 test('recipes: validates items, sanitises output', async () => {
-  const api = createApi({ ai: fakeAi() });
+  const api = createApi({ providers: one() });
   const good = await api.recipes(post({ items: [{ name: 'eggs', daysLeft: 1 }] }));
   assert.equal(good.status, 200);
   assert.deepEqual(good.body.recipes, [{ title: 'Omelette', time_minutes: 10, uses: ['eggs'], extras: ['salt'], steps: ['Whisk', 'Cook'] }]);
@@ -84,7 +127,7 @@ test('recipes: validates items, sanitises output', async () => {
   const tooMany = Array.from({ length: 41 }, (_, i) => ({ name: `item ${i}`, daysLeft: 1 }));
   assert.equal((await api.recipes(post({ items: tooMany }))).status, 400);
 
-  const empty = createApi({ ai: fakeAi({ suggestRecipes: async () => [] }) });
+  const empty = createApi({ providers: one({ suggestRecipes: async () => [] }) });
   assert.equal((await empty.recipes(post({ items: [{ name: 'eggs', daysLeft: 1 }] }))).status, 502);
 });
 
@@ -98,22 +141,25 @@ test('sanitize helpers cope with garbage', () => {
 
 test('resolveConfig: key handling, including the Vercel safety rule', () => {
   assert.equal(resolveConfig({}).disabledReason, 'no_api_key');
-  assert.equal(resolveConfig({}).ai, null);
+  assert.deepEqual(resolveConfig({}).providers, {});
 
-  // Public deployment with a key but no access code: refuse to use the key.
-  const exposed = resolveConfig({ ANTHROPIC_API_KEY: 'sk-ant-test', VERCEL: '1' });
-  assert.equal(exposed.ai, null);
-  assert.equal(exposed.disabledReason, 'access_code_required');
+  // Public deployment with a key but no access code: refuse to use any key.
+  for (const key of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY']) {
+    const exposed = resolveConfig({ [key]: 'sk-test', VERCEL: '1' });
+    assert.deepEqual(exposed.providers, {});
+    assert.equal(exposed.disabledReason, 'access_code_required');
+  }
 
-  const locked = resolveConfig({ ANTHROPIC_API_KEY: 'sk-ant-test', VERCEL: '1', APP_ACCESS_CODE: 'sesame' });
-  assert.ok(locked.ai);
+  const locked = resolveConfig({ ANTHROPIC_API_KEY: 'sk-ant-test', OPENAI_API_KEY: 'sk-test', VERCEL: '1', APP_ACCESS_CODE: 'sesame' });
+  assert.deepEqual(Object.keys(locked.providers), ['anthropic', 'openai']);
   assert.equal(locked.accessCode, 'sesame');
 
-  // Local dev with a key works without a code.
-  assert.ok(resolveConfig({ ANTHROPIC_API_KEY: 'sk-ant-test' }).ai);
+  // Local dev works without a code, and each key enables only its own provider.
+  assert.deepEqual(Object.keys(resolveConfig({ ANTHROPIC_API_KEY: 'sk-ant-test' }).providers), ['anthropic']);
+  assert.deepEqual(Object.keys(resolveConfig({ OPENAI_API_KEY: 'sk-test' }).providers), ['openai']);
 });
 
-// ---- AI request shape ------------------------------------------------------
+// ---- Anthropic request shape -----------------------------------------------
 
 function fakeClient(responseText, extra = {}) {
   const calls = [];
@@ -130,7 +176,7 @@ function fakeClient(responseText, extra = {}) {
   };
 }
 
-test('createAi: returns null without credentials, builds correct requests with a client', async () => {
+test('createAi (Claude): null without credentials, correct requests with a client', async () => {
   assert.equal(createAi({ env: {} }), null);
 
   const client = fakeClient(JSON.stringify({ items: [{ name: 'milk', days: 7 }] }));
@@ -149,7 +195,7 @@ test('createAi: returns null without credentials, builds correct requests with a
   assert.ok(req.messages[0].content.includes('<receipt>') && req.messages[0].content.includes('MILK 3.99'));
 });
 
-test('createAi: models can be overridden, and fallback is requested only for non-Haiku models', async () => {
+test('createAi (Claude): models can be overridden, and fallback is requested only for non-Haiku models', async () => {
   const client = fakeClient(JSON.stringify({ recipes: [] }));
   const ai = createAi({ client, env: { ANTHROPIC_RECEIPT_MODEL: 'claude-sonnet-5-5', ANTHROPIC_MODEL: 'claude-haiku-5-5' } });
   assert.deepEqual(ai.models, { receipt: 'claude-sonnet-5-5', recipes: 'claude-haiku-5-5' });
@@ -165,20 +211,65 @@ test('createAi: models can be overridden, and fallback is requested only for non
   assert.deepEqual(opus.calls[0].betas, ['server-side-fallback-2026-07-01']);
 });
 
-test('createAi: refusals, truncation and empty responses throw', async () => {
-  const refused = createAi({ client: fakeClient('', { stop_reason: 'refusal' }) });
+test('createAi (Claude): refusals, truncation and empty responses throw', async () => {
+  const refused = createAi({ client: fakeClient('', { stop_reason: 'refusal' }), env: {} });
   await assert.rejects(refused.parseReceipt('x'), /declined/);
-  const cut = createAi({ client: fakeClient('{"items":[', { stop_reason: 'max_tokens' }) });
+  const cut = createAi({ client: fakeClient('{"items":[', { stop_reason: 'max_tokens' }), env: {} });
   await assert.rejects(cut.parseReceipt('x'), /cut off/);
-  const none = createAi({ client: { beta: { messages: { create: async () => ({ stop_reason: 'end_turn', content: [] }) } } } });
+  const none = createAi({ client: { beta: { messages: { create: async () => ({ stop_reason: 'end_turn', content: [] }) } } }, env: {} });
   await assert.rejects(none.parseReceipt('x'), /no text/);
 });
 
-test('createAi: recipe prompt lists items with days left', async () => {
+test('createAi (Claude): recipe prompt lists items with days left', async () => {
   const client = fakeClient(JSON.stringify({ recipes: [] }));
-  await createAi({ client }).suggestRecipes([{ name: 'eggs', daysLeft: 1 }, { name: 'milk', daysLeft: 0 }]);
+  await createAi({ client, env: {} }).suggestRecipes([{ name: 'eggs', daysLeft: 1 }, { name: 'milk', daysLeft: 0 }]);
   const prompt = client.calls[0].messages[0].content;
   assert.ok(prompt.includes('eggs: expires in 1 day\n'));
   assert.ok(prompt.includes('milk: expires in 0 days'));
   assert.equal(client.calls[0].output_config.effort, 'medium');
+});
+
+// ---- OpenAI request shape --------------------------------------------------
+
+function fakeOpenAiClient(response) {
+  const calls = [];
+  return { calls, responses: { create: async (params) => (calls.push(params), response) } };
+}
+const outputText = (text) => ({ status: 'completed', output: [{ type: 'reasoning', summary: [] }, { type: 'message', content: [{ type: 'output_text', text }] }] });
+
+test('createOpenAi: null without a key, cheap default for receipts, strict JSON schema request', async () => {
+  assert.equal(createOpenAi({ env: {} }), null);
+
+  const client = fakeOpenAiClient(outputText(JSON.stringify({ items: [{ name: 'milk', days: 7 }] })));
+  const gpt = createOpenAi({ client, env: {} });
+  assert.deepEqual(gpt.models, { receipt: 'gpt-6-luna', recipes: 'gpt-6.1-sol' });
+  assert.deepEqual(await gpt.parseReceipt('MILK 3.99'), [{ name: 'milk', days: 7 }]);
+
+  const req = client.calls[0];
+  assert.equal(req.model, 'gpt-6-luna');
+  assert.equal(req.text.format.type, 'json_schema');
+  assert.equal(req.text.format.strict, true);
+  assert.equal(req.text.format.name, 'receipt_items');
+  assert.equal(req.reasoning.effort, 'low');
+  assert.equal(req.store, false); // receipts are not retained by OpenAI
+  assert.equal(req.temperature, undefined);
+  assert.ok(req.instructions.includes('grocery-store receipts'));
+  assert.ok(req.input.includes('<receipt>') && req.input.includes('MILK 3.99'));
+});
+
+test('createOpenAi: env overrides, recipes use the stronger model, errors throw', async () => {
+  const client = fakeOpenAiClient(outputText(JSON.stringify({ recipes: [] })));
+  const gpt = createOpenAi({ client, env: { OPENAI_RECEIPT_MODEL: 'gpt-5-nano', OPENAI_MODEL: 'gpt-6-astra' } });
+  assert.deepEqual(gpt.models, { receipt: 'gpt-5-nano', recipes: 'gpt-6-astra' });
+  await gpt.suggestRecipes([{ name: 'eggs', daysLeft: 1 }]);
+  assert.equal(client.calls[0].model, 'gpt-6-astra');
+  assert.equal(client.calls[0].reasoning.effort, 'medium');
+  assert.ok(client.calls[0].input.includes('eggs: expires in 1 day'));
+
+  const refusal = createOpenAi({ client: fakeOpenAiClient({ status: 'completed', output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'no' }] }] }), env: {} });
+  await assert.rejects(refusal.parseReceipt('x'), /declined/);
+  const cut = createOpenAi({ client: fakeOpenAiClient({ status: 'incomplete', output: [] }), env: {} });
+  await assert.rejects(cut.parseReceipt('x'), /cut off/);
+  const none = createOpenAi({ client: fakeOpenAiClient({ status: 'completed', output: [] }), env: {} });
+  await assert.rejects(none.parseReceipt('x'), /no text/);
 });

@@ -84,8 +84,17 @@ function setPref(key, value) {
 
 // ---- optional AI ------------------------------------------------------------
 
-const ai = { available: false, needsCode: false, codeOk: null };
+const ai = { available: false, needsCode: false, codeOk: null, providers: {}, defaultProvider: null };
 const aiUsable = () => ai.available && (!ai.needsCode || ai.codeOk);
+
+const PROVIDER_NAMES = ['anthropic', 'openai'];
+const PROVIDER_LABELS = { anthropic: 'Claude', openai: 'OpenAI GPT' };
+
+/** Which provider to use for a feature ('receipt' | 'recipes'): the saved choice if the server offers it, else the server default. */
+function chosenProvider(feature) {
+  const saved = getPref(`smartfridge.provider.${feature}`);
+  return ai.providers[saved] ? saved : ai.defaultProvider;
+}
 
 class AiError extends Error {
   constructor(status, code, message) {
@@ -117,10 +126,45 @@ async function refreshHealth() {
     ai.available = health.ai;
     ai.needsCode = health.needsCode;
     ai.codeOk = health.codeOk;
+    ai.providers = health.providers ?? {};
+    ai.defaultProvider = health.defaultProvider ?? null;
   } catch {
     ai.available = false; // offline or no server: built-in rules take over
+    ai.providers = {};
+    ai.defaultProvider = null;
   }
   renderAiBadge();
+  renderModelPickers();
+}
+
+const MODEL_PICKERS = [
+  { feature: 'receipt', selectId: 'receipt-provider', modelKey: 'receipt' },
+  { feature: 'recipes', selectId: 'recipe-provider', modelKey: 'recipes' },
+];
+
+function renderModelPickers() {
+  for (const { feature, selectId, modelKey } of MODEL_PICKERS) {
+    const select = $(selectId);
+    select.replaceChildren(
+      ...PROVIDER_NAMES.map((name) => {
+        const info = ai.providers[name];
+        const label = info ? `${PROVIDER_LABELS[name]} · ${info.models[modelKey]}` : `${PROVIDER_LABELS[name]} · not set up on the server`;
+        return h('option', { value: name, disabled: !info }, label);
+      }),
+    );
+    select.value = chosenProvider(feature) ?? '';
+    select.disabled = !aiUsable() || Object.keys(ai.providers).length < 2;
+  }
+  const missing = PROVIDER_NAMES.filter((n) => !ai.providers[n]);
+  $('model-hint').textContent = !ai.available
+    ? ''
+    : missing.length
+      ? `Add ${missing.map((n) => (n === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY')).join(' and ')} on the server to enable ${PROVIDER_LABELS[missing[0]]}.`
+      : 'Your choice is saved on this device.';
+}
+
+for (const { feature, selectId } of MODEL_PICKERS) {
+  $(selectId).addEventListener('change', (e) => setPref(`smartfridge.provider.${feature}`, e.target.value));
 }
 
 function aiStatusText() {
@@ -137,10 +181,10 @@ function renderAiBadge() {
 }
 
 /** Run an AI call; on any failure return null so the caller can fall back to offline rules. */
-async function tryAi(path, body) {
+async function tryAi(path, body, feature) {
   if (!aiUsable()) return { result: null, warning: null };
   try {
-    return { result: await aiFetch(path, body), warning: null };
+    return { result: await aiFetch(path, { ...body, provider: chosenProvider(feature) ?? undefined }), warning: null };
   } catch (err) {
     if (err.code === 'access_code_invalid' || err.code === 'access_code_required') refreshHealth();
     console.warn('AI call failed:', err.message);
@@ -341,10 +385,10 @@ $('parse-btn').addEventListener('click', async () => {
   btn.disabled = true;
   btn.textContent = 'Finding food…';
   try {
-    const { result, warning } = await tryAi('/api/receipt/parse', { text });
+    const { result, warning } = await tryAi('/api/receipt/parse', { text }, 'receipt');
     showReview(
       result
-        ? { items: result.items, source: 'ai' }
+        ? { items: result.items, source: 'ai', model: result.model }
         : { items: parseReceiptWithRules(text), source: 'rules', warning },
     );
   } catch (err) {
@@ -371,13 +415,14 @@ function reviewRow(item = { name: '', days: 7 }) {
   return row;
 }
 
-function showReview({ items, source, warning }) {
+function showReview({ items, source, warning, model }) {
   $('review-card').hidden = false;
   $('review-list').replaceChildren(...items.map(reviewRow));
   const parts = [];
   if (items.length === 0) parts.push('No food found. Add rows yourself, or edit the receipt text and try again.');
   else parts.push('Edit names and days, remove rows that are wrong, then add them to your fridge.');
-  if (source === 'rules') parts.push('Matched using the built-in food list.');
+  if (source === 'ai') parts.push(`Parsed by ${model}.`);
+  if (source === 'rules') parts.push('Matched using the built-in food list (no AI).');
   if (warning) parts.push(warning);
   $('review-note').textContent = parts.join(' ');
   $('review-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -428,12 +473,13 @@ $('recipe-btn').addEventListener('click', async () => {
   btn.disabled = true;
   status.textContent = 'Finding recipes…';
   try {
-    const { result, warning } = await tryAi('/api/recipes', { items });
+    const { result, warning } = await tryAi('/api/recipes', { items }, 'recipes');
     const recipes = result?.recipes ?? suggestRecipesOffline(items);
     const notes = [`Using: ${items.map((i) => i.name).join(', ')}.`];
     if (!recipes.length) notes.push("Couldn't match those items to a simple recipe. Try a longer time window.");
-    if (warning) notes.push(warning);
-    else if (!result && recipes.length) notes.push('Built-in recipes.');
+    if (result) notes.push(`Recipes by ${result.model}.`);
+    else if (warning) notes.push(warning);
+    else if (recipes.length) notes.push('Built-in recipes (no AI).');
     status.textContent = notes.join(' ');
     $('recipe-list').replaceChildren(...recipes.map(recipeCard));
   } catch (err) {

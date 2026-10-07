@@ -114,7 +114,7 @@ input[type='range'] { width: 100%; accent-color: var(--accent); }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; margin-top: 12px; }
 .form-grid > h2, .form-grid > .hint, .form-grid > .row, .form-grid > button, .form-grid > label:first-of-type { grid-column: 1 / -1; }
 label { display: block; font-size: 0.9rem; color: var(--muted); }
-label input, label textarea, .stack textarea {
+label input, label textarea, label select, .stack textarea {
   display: block; width: 100%; margin-top: 4px; padding: 10px; min-height: 44px;
   border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit;
 }

@@ -37,11 +37,13 @@ const port = Number(process.env.PORT) || 3000;
 const host = process.env.HOST || '127.0.0.1';
 
 app.listen(port, host, () => {
-  const { ai, disabledReason } = resolveConfig();
+  const { providers, disabledReason } = resolveConfig();
   console.log(`SmartFridge (revised) running at http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);
-  console.log(
-    ai
-      ? `AI features on (receipts: ${ai.models.receipt}, recipes: ${ai.models.recipes})`
-      : `AI features off (${disabledReason}). Set ANTHROPIC_API_KEY in .env to enable them; the built-in food list and recipes still work.`,
-  );
+  const names = Object.keys(providers);
+  if (names.length === 0) {
+    console.log(`AI features off (${disabledReason}). Set ANTHROPIC_API_KEY and/or OPENAI_API_KEY in .env to enable them; the built-in food list and recipes still work.`);
+  }
+  for (const name of names) {
+    console.log(`AI provider "${name}" on (receipts: ${providers[name].models.receipt}, recipes: ${providers[name].models.recipes})`);
+  }
 });
