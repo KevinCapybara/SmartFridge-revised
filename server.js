@@ -41,7 +41,7 @@ app.listen(port, host, () => {
   console.log(`SmartFridge (revised) running at http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);
   console.log(
     ai
-      ? `AI features on (model: ${ai.model})`
+      ? `AI features on (receipts: ${ai.models.receipt}, recipes: ${ai.models.recipes})`
       : `AI features off (${disabledReason}). Set ANTHROPIC_API_KEY in .env to enable them; the built-in food list and recipes still work.`,
   );
 });

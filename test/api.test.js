@@ -6,7 +6,7 @@ import { resolveConfig } from '../lib/runtime.js';
 import { sanitizeParsedItems, sanitizeRecipes } from '../lib/sanitize.js';
 
 const fakeAi = (overrides = {}) => ({
-  model: 'fake-model',
+  models: { receipt: 'fake-receipt-model', recipes: 'fake-recipe-model' },
   parseReceipt: async () => [
     { name: ' Milk ', days: 7.4 },
     { name: 'milk', days: 3 }, // duplicate after normalising
@@ -22,7 +22,7 @@ const post = (body, headers = {}) => ({ method: 'POST', headers, body });
 
 test('health reports AI state and never leaks the access code', () => {
   const off = createApi({ ai: null, disabledReason: 'no_api_key' }).health({ method: 'GET', headers: {} });
-  assert.deepEqual(off.body, { ok: true, ai: false, needsCode: false, codeOk: null, model: null, reason: 'no_api_key' });
+  assert.deepEqual(off.body, { ok: true, ai: false, needsCode: false, codeOk: null, models: null, reason: 'no_api_key' });
 
   const api = createApi({ ai: fakeAi(), accessCode: 'sesame' });
   assert.equal(api.health({ method: 'GET', headers: {} }).body.codeOk, false);
@@ -134,18 +134,35 @@ test('createAi: returns null without credentials, builds correct requests with a
   assert.equal(createAi({ env: {} }), null);
 
   const client = fakeClient(JSON.stringify({ items: [{ name: 'milk', days: 7 }] }));
-  const ai = createAi({ client, model: 'claude-opus-5-5' });
+  const ai = createAi({ client, env: {} });
+  assert.deepEqual(ai.models, { receipt: 'claude-haiku-5-5', recipes: 'claude-opus-5-5' });
   assert.deepEqual(await ai.parseReceipt('MILK 3.99'), [{ name: 'milk', days: 7 }]);
 
   const req = client.calls[0];
-  assert.equal(req.model, 'claude-opus-5-5');
+  assert.equal(req.model, 'claude-haiku-5-5'); // cheapest model for receipt parsing
   assert.equal(req.output_config.format.type, 'json_schema');
   assert.equal(req.output_config.effort, 'low');
-  assert.equal(req.fallbacks, 'default');
-  assert.deepEqual(req.betas, ['server-side-fallback-2026-07-01']);
-  assert.equal(req.thinking, undefined); // Opus 5.5 rejects disabled/budgeted thinking
-  assert.equal(req.temperature, undefined); // sampling params are rejected on this model
+  assert.equal(req.fallbacks, undefined); // Haiku has no server-side refusal fallback
+  assert.equal(req.betas, undefined);
+  assert.equal(req.thinking, undefined);
+  assert.equal(req.temperature, undefined); // non-default sampling params are rejected
   assert.ok(req.messages[0].content.includes('<receipt>') && req.messages[0].content.includes('MILK 3.99'));
+});
+
+test('createAi: models can be overridden, and fallback is requested only for non-Haiku models', async () => {
+  const client = fakeClient(JSON.stringify({ recipes: [] }));
+  const ai = createAi({ client, env: { ANTHROPIC_RECEIPT_MODEL: 'claude-sonnet-5-5', ANTHROPIC_MODEL: 'claude-haiku-5-5' } });
+  assert.deepEqual(ai.models, { receipt: 'claude-sonnet-5-5', recipes: 'claude-haiku-5-5' });
+
+  await ai.suggestRecipes([{ name: 'eggs', daysLeft: 1 }]);
+  assert.equal(client.calls[0].model, 'claude-haiku-5-5');
+  assert.equal(client.calls[0].fallbacks, undefined);
+
+  const opus = fakeClient(JSON.stringify({ recipes: [] }));
+  await createAi({ client: opus, env: {} }).suggestRecipes([{ name: 'eggs', daysLeft: 1 }]);
+  assert.equal(opus.calls[0].model, 'claude-opus-5-5');
+  assert.equal(opus.calls[0].fallbacks, 'default');
+  assert.deepEqual(opus.calls[0].betas, ['server-side-fallback-2026-07-01']);
 });
 
 test('createAi: refusals, truncation and empty responses throw', async () => {

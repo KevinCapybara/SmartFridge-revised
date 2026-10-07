@@ -54,7 +54,8 @@ You don't need a Mac or the Vercel CLI.
 3. *(Optional, for AI)* Under **Settings > Environment Variables** add:
    - `ANTHROPIC_API_KEY`: your key from [console.anthropic.com](https://console.anthropic.com). Set a monthly spend limit there too.
    - `APP_ACCESS_CODE`: a long random string. **Required** whenever the key is set: your URL is public, so without a code anyone could use your key. If you set the key without a code, the app refuses to use it.
-   - `ANTHROPIC_MODEL` *(optional)*: defaults to `claude-opus-5-5`. `claude-haiku-5-5` is much cheaper and faster for this job.
+   - `ANTHROPIC_RECEIPT_MODEL` *(optional)*: model for receipt parsing. Defaults to `claude-haiku-5-5`, the cheapest current model, which is plenty for this extraction job.
+   - `ANTHROPIC_MODEL` *(optional)*: model for recipes. Defaults to `claude-opus-5-5`; set `claude-haiku-5-5` to cut cost further.
 
    Redeploy after adding variables.
 4. **On your iPhone, open the Vercel URL in Safari** > Share button > **Add to Home Screen**. (On Android Chrome: menu > **Install app**; the app also offers an Install button.)
