@@ -1,5 +1,5 @@
 {
-  "name": "SmartFridge (revised)",
+  "name": "SmartFridge",
   "short_name": "SmartFridge",
   "description": "Scan grocery receipts, track what's in your fridge, and use it up before it expires.",
   "id": "/",

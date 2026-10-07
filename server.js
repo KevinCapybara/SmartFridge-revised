@@ -52,7 +52,7 @@ function lanAddresses() {
 
 app.listen(port, host, () => {
   const { providers, disabledReason } = resolveConfig();
-  console.log(`SmartFridge (revised) running at http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);
+  console.log(`SmartFridge running at http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);
   if (host === '0.0.0.0') {
     for (const ip of lanAddresses()) console.log(`  On your phone (same Wi-Fi): http://${ip}:${port}`);
     if (!process.env.APP_ACCESS_CODE) console.log('  Anyone on this network can use the app. Set APP_ACCESS_CODE in .env to require a code for AI features.');

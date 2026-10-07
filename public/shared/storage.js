@@ -62,7 +62,7 @@ export function createStorage(backend = globalThis.localStorage) {
 
     /** Backup file contents. */
     exportJson() {
-      return JSON.stringify({ app: 'smartfridge-revised', version: 1, exportedAt: new Date().toISOString(), items: read() }, null, 2);
+      return JSON.stringify({ app: 'smartfridge', version: 1, exportedAt: new Date().toISOString(), items: read() }, null, 2);
     },
 
     /** Replace the fridge with a backup. Entries that don't validate are skipped; returns how many were kept. */

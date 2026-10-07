@@ -1,7 +1,7 @@
 {
-  "name": "smartfridge-revised",
+  "name": "smartfridge",
   "version": "1.0.0",
-  "description": "SmartFridge (revised): scan a grocery receipt, track what's in your fridge, see what's expiring, get recipes.",
+  "description": "SmartFridge: scan a grocery receipt, track what's in your fridge, see what's expiring, get recipes.",
   "private": true,
   "type": "module",
   "main": "server.js",

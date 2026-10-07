@@ -54,7 +54,6 @@ body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-are
 
 .app-header { padding: 20px 16px 8px; text-align: center; max-width: 720px; margin: 0 auto; }
 .app-header h1 { margin: 0; font-size: 2rem; letter-spacing: -0.02em; }
-.revised { font-weight: 400; color: var(--muted); font-size: 0.6em; }
 .header-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
 .badge { display: inline-block; margin: 0; padding: 4px 10px; border-radius: 999px; background: var(--accent-soft); font-size: 0.8rem; color: var(--muted); }
 .settings h3 { margin: 8px 0 0; font-size: 1rem; }

@@ -1,4 +1,4 @@
-// SmartFridge (revised) front end. Plain ES modules, no build step.
+// SmartFridge front end. Plain ES modules, no build step.
 // The fridge lives on this device (localStorage). The server is only used for
 // the optional AI features, and every AI feature has an offline fallback.
 
