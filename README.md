@@ -149,4 +149,4 @@ The repo is public, so keys never go in it. API keys live only in Vercel's envir
 
 - Single user, single device: no sync between devices (export/import only).
 - On-device OCR on crumpled thermal receipts is imperfect (the AI photo path is more accurate), which is why there is always a review step.
-- Not yet built: push notifications for expiring food, barcode scanning, shopping list.
+- Not yet built: push notifications for expiring food.
