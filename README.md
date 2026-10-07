@@ -1,8 +1,6 @@
 # SmartFridge
 
-Scan a grocery receipt, keep track of what's in your fridge, see what's about to expire, and get recipes that use it up.
-
-A rebuild of the original SmartFridge (a TritonHacks 2024 MIT App Inventor app, [KevinCapybara/SmartFridge](https://github.com/KevinCapybara/SmartFridge)) as an installable **PWA**, so one codebase runs on **iPhone and Android** and deploys to **Vercel**. (This repository is named "SmartFridge (revised)" to tell it apart from the original; the app itself is just called SmartFridge.)
+Scan a grocery receipt, keep track of what's in your fridge, see what's about to expire, and generate recipes that use up your soon-to-expire foods.
 
 ## Features
 
