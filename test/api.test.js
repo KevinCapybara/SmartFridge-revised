@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createApi } from '../lib/api.js';
+import { createApi, MAX_IMAGE_BASE64_CHARS } from '../lib/api.js';
 import { createAi } from '../lib/ai.js';
 import { createOpenAi } from '../lib/openai.js';
 import { resolveConfig } from '../lib/runtime.js';
@@ -15,6 +15,7 @@ const fakeProvider = (tag, overrides = {}) => ({
     { name: 'broken', days: 'soon' }, // dropped
     { days: 5 }, // dropped
   ],
+  scanReceipt: async () => [{ name: 'Bananas', days: 5 }],
   suggestRecipes: async () => [{ title: ' Omelette ', time_minutes: 10, uses: ['eggs'], extras: ['salt'], steps: ['Whisk', 'Cook'] }, { title: '' }],
   ...overrides,
 });
@@ -107,6 +108,48 @@ test('provider choice: caller picks per request, default otherwise, bad values r
   assert.deepEqual([recipe.status, recipe.body.provider, recipe.body.model], [200, 'openai', 'gpt-recipe-model']);
 });
 
+test('scanReceipt: reads a photo, validates the upload, honours provider choice', async () => {
+  const seen = [];
+  const api = createApi({
+    providers: {
+      anthropic: fakeProvider('claude', { scanReceipt: async (img) => (seen.push(['claude', img.mediaType, img.base64]), [{ name: 'Bananas', days: 5 }]) }),
+      openai: fakeProvider('gpt', { scanReceipt: async (img) => (seen.push(['gpt', img.mediaType, img.base64]), [{ name: 'Eggs', days: 28 }]) }),
+    },
+  });
+  const jpeg = Buffer.from('fake jpeg bytes').toString('base64');
+
+  const ok = await api.scanReceipt(post({ image: jpeg, mediaType: 'image/jpeg' }));
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.body, { items: [{ name: 'bananas', days: 5 }], provider: 'anthropic', model: 'claude-receipt-model' });
+
+  const viaGpt = await api.scanReceipt(post({ image: jpeg, mediaType: 'image/png', provider: 'openai' }));
+  assert.deepEqual([viaGpt.body.provider, viaGpt.body.items[0].name], ['openai', 'eggs']);
+  assert.deepEqual(seen, [['claude', 'image/jpeg', jpeg], ['gpt', 'image/png', jpeg]]);
+
+  const bad = [
+    {}, // no image
+    { image: jpeg }, // no type
+    { image: jpeg, mediaType: 'image/gif' }, // unsupported type
+    { image: `data:image/jpeg;base64,${jpeg}`, mediaType: 'image/jpeg' }, // data: prefix not allowed
+    { image: 'not base64!!', mediaType: 'image/jpeg' },
+    { image: 123, mediaType: 'image/jpeg' },
+  ];
+  for (const body of bad) assert.equal((await api.scanReceipt(post(body))).status, 400, JSON.stringify(body).slice(0, 60));
+
+  const huge = await api.scanReceipt(post({ image: 'A'.repeat(MAX_IMAGE_BASE64_CHARS + 1), mediaType: 'image/jpeg' }));
+  assert.equal(huge.status, 413);
+
+  assert.equal((await api.scanReceipt({ method: 'GET', headers: {}, body: {} })).status, 405);
+  const gated = createApi({ providers: one(), accessCode: 'sesame' });
+  assert.equal((await gated.scanReceipt(post({ image: jpeg, mediaType: 'image/jpeg' }))).status, 401);
+  assert.equal((await createApi({ providers: {} }).scanReceipt(post({ image: jpeg, mediaType: 'image/jpeg' }))).status, 503);
+
+  const failing = createApi({ providers: one({ scanReceipt: async () => { throw new Error('vision boom'); } }) });
+  const res = await failing.scanReceipt(post({ image: jpeg, mediaType: 'image/jpeg' }));
+  assert.equal(res.status, 502);
+  assert.ok(!JSON.stringify(res.body).includes('vision boom'));
+});
+
 test('parseReceipt: 503 without AI, 502 when the model call fails', async () => {
   assert.equal((await createApi({ providers: {} }).parseReceipt(post({ text: 'milk' }))).status, 503);
   const failing = createApi({ providers: one({ parseReceipt: async () => { throw new Error('boom'); } }) });
@@ -181,7 +224,7 @@ test('createAi (Claude): null without credentials, correct requests with a clien
 
   const client = fakeClient(JSON.stringify({ items: [{ name: 'milk', days: 7 }] }));
   const ai = createAi({ client, env: {} });
-  assert.deepEqual(ai.models, { receipt: 'claude-haiku-5-5', recipes: 'claude-opus-5-5' });
+  assert.deepEqual(ai.models, { receipt: 'claude-haiku-5-5', recipes: 'claude-haiku-5-5' }); // fastest tier for both
   assert.deepEqual(await ai.parseReceipt('MILK 3.99'), [{ name: 'milk', days: 7 }]);
 
   const req = client.calls[0];
@@ -204,11 +247,25 @@ test('createAi (Claude): models can be overridden, and fallback is requested onl
   assert.equal(client.calls[0].model, 'claude-haiku-5-5');
   assert.equal(client.calls[0].fallbacks, undefined);
 
-  const opus = fakeClient(JSON.stringify({ recipes: [] }));
-  await createAi({ client: opus, env: {} }).suggestRecipes([{ name: 'eggs', daysLeft: 1 }]);
-  assert.equal(opus.calls[0].model, 'claude-opus-5-5');
-  assert.equal(opus.calls[0].fallbacks, 'default');
-  assert.deepEqual(opus.calls[0].betas, ['server-side-fallback-2026-07-01']);
+  const sonnet = fakeClient(JSON.stringify({ recipes: [] }));
+  await createAi({ client: sonnet, env: { ANTHROPIC_MODEL: 'claude-sonnet-5-5' } }).suggestRecipes([{ name: 'eggs', daysLeft: 1 }]);
+  assert.equal(sonnet.calls[0].model, 'claude-sonnet-5-5');
+  assert.equal(sonnet.calls[0].fallbacks, 'default');
+  assert.deepEqual(sonnet.calls[0].betas, ['server-side-fallback-2026-07-01']);
+});
+
+test('createAi (Claude): scanReceipt sends the photo as an image block', async () => {
+  const client = fakeClient(JSON.stringify({ items: [{ name: 'milk', days: 7 }] }));
+  const items = await createAi({ client, env: {} }).scanReceipt({ base64: 'QUJD', mediaType: 'image/jpeg' });
+  assert.deepEqual(items, [{ name: 'milk', days: 7 }]);
+
+  const req = client.calls[0];
+  assert.equal(req.model, 'claude-haiku-5-5');
+  assert.equal(req.output_config.effort, 'low');
+  const [image, text] = req.messages[0].content;
+  assert.deepEqual(image, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'QUJD' } });
+  assert.equal(text.type, 'text');
+  assert.ok(req.system.includes('photo'));
 });
 
 test('createAi (Claude): refusals, truncation and empty responses throw', async () => {
@@ -226,7 +283,7 @@ test('createAi (Claude): recipe prompt lists items with days left', async () => 
   const prompt = client.calls[0].messages[0].content;
   assert.ok(prompt.includes('eggs: expires in 1 day\n'));
   assert.ok(prompt.includes('milk: expires in 0 days'));
-  assert.equal(client.calls[0].output_config.effort, 'medium');
+  assert.equal(client.calls[0].output_config.effort, 'low'); // lowest latency
 });
 
 // ---- OpenAI request shape --------------------------------------------------
@@ -242,7 +299,7 @@ test('createOpenAi: null without a key, cheap default for receipts, strict JSON 
 
   const client = fakeOpenAiClient(outputText(JSON.stringify({ items: [{ name: 'milk', days: 7 }] })));
   const gpt = createOpenAi({ client, env: {} });
-  assert.deepEqual(gpt.models, { receipt: 'gpt-6-luna', recipes: 'gpt-6.1-sol' });
+  assert.deepEqual(gpt.models, { receipt: 'gpt-6-luna', recipes: 'gpt-6-luna' }); // fastest tier for both
   assert.deepEqual(await gpt.parseReceipt('MILK 3.99'), [{ name: 'milk', days: 7 }]);
 
   const req = client.calls[0];
@@ -263,8 +320,16 @@ test('createOpenAi: env overrides, recipes use the stronger model, errors throw'
   assert.deepEqual(gpt.models, { receipt: 'gpt-5-nano', recipes: 'gpt-6-astra' });
   await gpt.suggestRecipes([{ name: 'eggs', daysLeft: 1 }]);
   assert.equal(client.calls[0].model, 'gpt-6-astra');
-  assert.equal(client.calls[0].reasoning.effort, 'medium');
+  assert.equal(client.calls[0].reasoning.effort, 'low');
   assert.ok(client.calls[0].input.includes('eggs: expires in 1 day'));
+
+  const vision = fakeOpenAiClient(outputText(JSON.stringify({ items: [{ name: 'eggs', days: 28 }] })));
+  const scanned = await createOpenAi({ client: vision, env: {} }).scanReceipt({ base64: 'QUJD', mediaType: 'image/png' });
+  assert.deepEqual(scanned, [{ name: 'eggs', days: 28 }]);
+  const [message] = vision.calls[0].input;
+  assert.equal(message.role, 'user');
+  assert.deepEqual(message.content[1], { type: 'input_image', image_url: 'data:image/png;base64,QUJD', detail: 'high' });
+  assert.equal(vision.calls[0].store, false);
 
   const refusal = createOpenAi({ client: fakeOpenAiClient({ status: 'completed', output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'no' }] }] }), env: {} });
   await assert.rejects(refusal.parseReceipt('x'), /declined/);

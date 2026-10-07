@@ -119,6 +119,8 @@ label input, label textarea, label select, .stack textarea {
   border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit;
 }
 textarea { resize: vertical; }
+.check { display: flex; gap: 10px; align-items: flex-start; color: var(--text); }
+.check input { width: auto; min-height: 0; margin: 4px 0 0; flex: none; accent-color: var(--accent); }
 .stack { margin: 12px 0; }
 .hint { color: var(--muted); font-size: 0.85rem; margin: 6px 0; }
 summary { cursor: pointer; font-weight: 600; min-height: 32px; }

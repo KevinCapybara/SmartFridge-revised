@@ -161,11 +161,20 @@ function renderModelPickers() {
     : missing.length
       ? `Add ${missing.map((n) => (n === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY')).join(' and ')} on the server to enable ${PROVIDER_LABELS[missing[0]]}.`
       : 'Your choice is saved on this device.';
+  renderVisionNote();
 }
 
 for (const { feature, selectId } of MODEL_PICKERS) {
-  $(selectId).addEventListener('change', (e) => setPref(`smartfridge.provider.${feature}`, e.target.value));
+  $(selectId).addEventListener('change', (e) => {
+    setPref(`smartfridge.provider.${feature}`, e.target.value);
+    renderVisionNote();
+  });
 }
+
+$('vision-toggle').addEventListener('change', (e) => {
+  setPref('smartfridge.visionOff', e.target.checked ? '' : '1');
+  renderVisionNote();
+});
 
 function aiStatusText() {
   if (!ai.available) return 'AI is off. Receipts and recipes use the built-in food list and recipe book.';
@@ -336,9 +345,82 @@ function loadTesseract() {
   return tesseractPromise;
 }
 
+/** On-device OCR: photo -> text in the box, for the user to review and send to "Find the food". */
+async function readWithOcr(file, progress, status) {
+  progress.value = 0;
+  status.textContent = 'Loading text recognition…';
+  const Tesseract = await loadTesseract();
+  const result = await Tesseract.recognize(file, 'eng', {
+    logger: (m) => {
+      if (m.status === 'recognizing text') {
+        progress.value = m.progress;
+        status.textContent = `Reading receipt on this device… ${Math.round(m.progress * 100)}%`;
+      }
+    },
+  });
+  const text = result.data.text.trim();
+  $('receipt-text').value = text;
+  return text;
+}
+
+function loadImage(file) {
+  const url = URL.createObjectURL(file);
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => (URL.revokeObjectURL(url), resolve(img));
+    img.onerror = () => (URL.revokeObjectURL(url), reject(new Error('Could not read that image')));
+    img.src = url;
+  });
+}
+
+const MAX_IMAGE_BASE64_CHARS = 3_900_000; // keep under the server's / Vercel's request limit
+
+/**
+ * Shrink a phone photo to a JPEG small enough to upload (a raw photo is 3-10 MB).
+ * Tries progressively smaller sizes until the base64 fits. Returns base64 without a data: prefix.
+ */
+async function photoToBase64Jpeg(file) {
+  const img = await loadImage(file); // the browser applies the photo's EXIF rotation
+  for (const [maxSide, quality] of [[2000, 0.8], [1600, 0.75], [1200, 0.7], [900, 0.6]]) {
+    const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; // JPEG has no transparency
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+    if (!blob) throw new Error('Could not process that image');
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+    const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+    if (base64.length <= MAX_IMAGE_BASE64_CHARS) return base64;
+  }
+  throw new Error('That photo is too large to upload');
+}
+
+const visionOn = () => aiUsable() && getPref('smartfridge.visionOff') !== '1';
+
+function renderVisionNote() {
+  $('vision-note').textContent = visionOn()
+    ? `The photo is sent to ${PROVIDER_LABELS[chosenProvider('receipt')] ?? 'the AI provider'} to be read; this app does not keep it. Turn this off in Settings to read photos on this device instead.`
+    : 'The photo is read on this device and never uploaded.';
+}
+
+let scanning = false;
+
 $('receipt-file').addEventListener('change', async (e) => {
   const file = e.target.files[0];
+  e.target.value = '';
   if (!file) return;
+  if (scanning) return toast('Still reading the last photo - one moment', true);
+  scanning = true;
 
   const preview = $('receipt-preview');
   if (preview.dataset.url) URL.revokeObjectURL(preview.dataset.url);
@@ -349,31 +431,41 @@ $('receipt-file').addEventListener('change', async (e) => {
   const progress = $('ocr-progress');
   const status = $('ocr-status');
   progress.hidden = false;
-  progress.value = 0;
-  status.textContent = 'Loading text recognition…';
   $('parse-btn').disabled = true;
 
   try {
-    const Tesseract = await loadTesseract();
-    const result = await Tesseract.recognize(file, 'eng', {
-      logger: (m) => {
-        if (m.status === 'recognizing text') {
-          progress.value = m.progress;
-          status.textContent = `Reading receipt… ${Math.round(m.progress * 100)}%`;
+    // 1. Hybrid path: let the AI model read the photo directly (most accurate).
+    if (visionOn()) {
+      progress.removeAttribute('value'); // indeterminate
+      status.textContent = 'Reading receipt with AI…';
+      let warning = null;
+      try {
+        const base64 = await photoToBase64Jpeg(file);
+        const { result, warning: w } = await tryAi('/api/receipt/scan', { image: base64, mediaType: 'image/jpeg' }, 'receipt');
+        if (result) {
+          status.textContent = 'Done. Check the list below.';
+          showReview({ items: result.items, source: 'ai', model: result.model, fromPhoto: true });
+          return;
         }
-      },
-    });
-    const text = result.data.text.trim();
-    $('receipt-text').value = text;
+        warning = w;
+      } catch (err) {
+        console.warn('AI photo read failed:', err.message);
+      }
+      status.textContent = `${warning ?? 'AI could not read the photo.'} Reading it on this device instead…`;
+    }
+
+    // 2. Fallback / no-AI path: on-device OCR, then the user reviews the text.
+    progress.value = 0;
+    const text = await readWithOcr(file, progress, status);
     status.textContent = text
       ? 'Done. Fix any misread text below, then tap "Find the food".'
       : 'No text found in that image. Try a clearer photo, or paste the text.';
   } catch (err) {
     status.textContent = err.message;
   } finally {
+    scanning = false;
     progress.hidden = true;
     $('parse-btn').disabled = false;
-    e.target.value = '';
   }
 });
 
@@ -415,13 +507,13 @@ function reviewRow(item = { name: '', days: 7 }) {
   return row;
 }
 
-function showReview({ items, source, warning, model }) {
+function showReview({ items, source, warning, model, fromPhoto = false }) {
   $('review-card').hidden = false;
   $('review-list').replaceChildren(...items.map(reviewRow));
   const parts = [];
-  if (items.length === 0) parts.push('No food found. Add rows yourself, or edit the receipt text and try again.');
+  if (items.length === 0) parts.push('No food found. Add rows yourself, or try a clearer photo or edit the receipt text.');
   else parts.push('Edit names and days, remove rows that are wrong, then add them to your fridge.');
-  if (source === 'ai') parts.push(`Parsed by ${model}.`);
+  if (source === 'ai') parts.push(fromPhoto ? `Read from the photo by ${model}.` : `Parsed by ${model}.`);
   if (source === 'rules') parts.push('Matched using the built-in food list (no AI).');
   if (warning) parts.push(warning);
   $('review-note').textContent = parts.join(' ');
@@ -505,6 +597,7 @@ function recipeCard(r) {
 
 $('settings-btn').addEventListener('click', () => {
   $('code-input').value = getPref('smartfridge.code');
+  $('vision-toggle').checked = getPref('smartfridge.visionOff') !== '1';
   renderAiBadge();
   $('settings-dialog').showModal();
 });
@@ -593,4 +686,5 @@ if ('serviceWorker' in navigator) {
 
 setupInstallHint();
 renderItems();
+renderVisionNote();
 refreshHealth();

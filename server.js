@@ -15,11 +15,14 @@ const { getApi, resolveConfig, toNodeHandler } = await import('./lib/runtime.js'
 
 const app = express();
 app.disable('x-powered-by');
+// Photos arrive as base64 JSON (the app downsizes them first), so this route needs a bigger limit.
+app.use('/api/receipt/scan', express.json({ limit: '5mb' }));
 app.use('/api', express.json({ limit: '256kb' }));
 
 const api = () => getApi();
 app.all('/api/health', toNodeHandler((req) => api().health(req)));
 app.all('/api/receipt/parse', toNodeHandler((req) => api().parseReceipt(req)));
+app.all('/api/receipt/scan', toNodeHandler((req) => api().scanReceipt(req)));
 app.all('/api/recipes', toNodeHandler((req) => api().recipes(req)));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found', code: 'not_found' }));
 

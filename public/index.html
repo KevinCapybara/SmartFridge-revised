@@ -89,6 +89,7 @@
           Take photo / choose image
           <input id="receipt-file" type="file" accept="image/*" capture="environment" hidden>
         </label>
+        <p id="vision-note" class="hint"></p>
         <img id="receipt-preview" class="preview" alt="Receipt preview" hidden>
         <progress id="ocr-progress" max="1" value="0" hidden></progress>
         <p id="ocr-status" class="hint" aria-live="polite"></p>
@@ -155,6 +156,11 @@
         <select id="recipe-provider"></select>
       </label>
       <p id="model-hint" class="hint wide"></p>
+
+      <label class="check wide">
+        <input type="checkbox" id="vision-toggle">
+        <span>Read receipt photos with AI<br><span class="hint">Sends the photo to the receipt-scanning provider above. Turn off to read photos on this device (slower, less accurate, never uploaded).</span></span>
+      </label>
 
       <h3 class="wide">Backup</h3>
       <p class="hint wide">Your fridge is stored only on this device. Export a backup before clearing browser data or switching phones.</p>

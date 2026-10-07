@@ -6,7 +6,7 @@ A rebuild of the original SmartFridge (a TritonHacks 2024 MIT App Inventor app, 
 
 ## Features
 
-- **Scan a receipt.** Take a photo; on-device OCR ([Tesseract.js](https://github.com/naptha/tesseract.js)) reads it. Or paste the text.
+- **Scan a receipt.** Take a photo. With AI on, a vision model reads it directly; otherwise on-device OCR ([Tesseract.js](https://github.com/naptha/tesseract.js)) does. Or paste the text.
 - **Find the food.** Turns noisy receipt lines into generic food names with a shelf life ("PARM CHEESE 8OZ" becomes parmesan cheese, 60 days). Uses Claude or GPT (your choice) when configured, otherwise a built-in food list.
 - **Review before saving.** Edit names and days, delete wrong rows, add your own.
 - **Fridge.** Everything you have, soonest-expiring first, colour-coded. Edit, quantity, "used / remove", or add items by hand (leave days blank and it estimates the shelf life).
@@ -21,7 +21,8 @@ A rebuild of the original SmartFridge (a TritonHacks 2024 MIT App Inventor app, 
 phone (PWA)                                   Vercel
 ┌──────────────────────────────┐   only if AI is on   ┌─────────────────────────┐
 │ UI, fridge data (localStorage)│ ───────────────────▶│ /api/receipt/parse      │──▶ Claude
-│ OCR, food list, recipe book   │ ◀─────────────────── │ /api/recipes            │
+│ OCR, food list, recipe book   │ ◀─────────────────── │ /api/receipt/scan       │
+│                               │                       │ /api/recipes            │
 └──────────────────────────────┘     JSON              │ /api/health             │
                                                        └─────────────────────────┘
 ```
@@ -67,12 +68,21 @@ In the app, **Settings > AI models** has two toggles, saved on your device:
 
 | Feature | Claude option (default) | OpenAI option (default) |
 | --- | --- | --- |
-| **Receipt scanning** (text to food items) | `claude-haiku-5-5` ($0.10 / $0.50 per 1M tokens) | `gpt-6-luna` ($0.10 / $0.50) |
-| **Recipe generation** | `claude-opus-5-5` ($4 / $20) | `gpt-6.1-sol` ($2 / $10) |
+| **Receipt scanning** (photo or text to food items) | `claude-haiku-5-5` ($0.10 / $0.50 per 1M tokens) | `gpt-6-luna` ($0.10 / $0.50) |
+| **Recipe generation** | `claude-haiku-5-5` | `gpt-6-luna` |
+
+Defaults are the fastest, cheapest tier of each provider, with reasoning effort set to low, because both jobs are short and structured and the app is used from a phone. For richer recipes at some cost in speed, set `ANTHROPIC_MODEL=claude-sonnet-5-5` and/or `OPENAI_MODEL=gpt-6.1-sol`. Latency was chosen by model tier, not benchmarked.
 
 A provider appears only if its key is set on the server. If both are set, Claude is the default until you choose. Receipt and recipe results say which model produced them. If an AI call fails, the app falls back to the built-in food list / recipe book and says so. Prices are from the vendors' pricing pages as of October 2026; the OpenAI model names are the newest listed on [OpenAI's model pricing page](https://developers.openai.com/api/docs/pricing), so check them before relying on the numbers.
 
 OpenAI requests are sent with `store: false`, so OpenAI doesn't keep your receipts.
+
+### How receipt photos are read (hybrid)
+
+1. **AI on** (default when a provider is unlocked): the phone shrinks the photo to a JPEG of roughly 0.3-1 MB, and the chosen model reads it directly with vision. Most accurate on crumpled or faded receipts.
+2. **AI off, locked, offline, the call fails, or you turned off "Read receipt photos with AI" in Settings:** the photo is read on-device with OCR (Tesseract.js), you review the text, then "Find the food" parses it (with AI if available, otherwise the built-in food list).
+
+With AI photo reading on, the photo is sent to the provider you chose (the app never stores it). Turn the setting off to keep photos on the device.
 
 ### iPhone notes
 
@@ -105,5 +115,5 @@ test/                node:test suites
 ## Limits and ideas
 
 - Single user, single device: no sync between devices (export/import only).
-- OCR on crumpled thermal receipts is imperfect, which is why there is a review step. Sending the photo straight to Claude's vision instead of OCR would be more accurate.
+- On-device OCR on crumpled thermal receipts is imperfect (the AI photo path is more accurate), which is why there is always a review step.
 - Not yet built: push notifications for expiring food, barcode scanning, shopping list.
