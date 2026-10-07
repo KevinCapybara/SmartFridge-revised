@@ -1,6 +1,6 @@
 # SmartFridge
 
-Scan a grocery receipt, keep track of what's in your fridge, see what's about to expire, and generate recipes that use up your soon-to-expire foods.
+Reducing household food waste: scans grocery receipts to add foods to your fridge, keeps track of when foods in your fridge expire, and generates recipes using your soon-to-expire foods.
 
 ## Features
 
