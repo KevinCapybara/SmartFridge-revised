@@ -1,0 +1,5 @@
+#!/bin/sh
+# Blocks a commit that contains an API key / token or a file that must stay private.
+# Enabled by `npm install` (scripts/setup-hooks.mjs). Bypassing it with --no-verify still gets
+# caught by the GitHub Actions check and GitHub's push protection.
+exec node scripts/check-secrets.mjs --staged

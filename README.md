@@ -143,6 +143,10 @@ scripts/make-icons.mjs   regenerates public/icons/*.png
 test/                node:test suites
 ```
 
+## Security and privacy
+
+The repo is public, so keys never go in it. API keys live only in Vercel's environment variables or a git-ignored `.env`. A pre-commit hook and a GitHub Actions check block anything key-shaped, and your fridge data stays on your device. Details, and what to do if a key leaks, are in [SECURITY.md](SECURITY.md). Run `npm run check-secrets` to scan the whole repo.
+
 ## Limits and ideas
 
 - Single user, single device: no sync between devices (export/import only).

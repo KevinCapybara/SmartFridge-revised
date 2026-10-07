@@ -13,6 +13,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 if (fs.existsSync(path.join(here, '.env'))) process.loadEnvFile(path.join(here, '.env'));
 
 const { getApi, resolveConfig, toNodeHandler } = await import('./lib/runtime.js');
+const { redact } = await import('./lib/redact.js');
 
 const app = express();
 app.disable('x-powered-by');
@@ -32,7 +33,7 @@ app.use(express.static(path.join(here, 'public'), { setHeaders: (res, p) => p.en
 
 app.use((err, req, res, next) => {
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON', code: 'bad_request' });
-  console.error(err);
+  console.error(redact(err));
   res.status(500).json({ error: 'Internal error', code: 'internal' });
 });
 

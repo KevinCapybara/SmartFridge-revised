@@ -1,0 +1,26 @@
+name: CI
+
+# Runs the tests and re-checks the whole repo for leaked secrets on every push and pull request.
+# This is the backstop for the local pre-commit hook, which can be skipped with --no-verify.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Scan for secrets
+        run: npm run check-secrets
+      - name: Test
+        run: npm test

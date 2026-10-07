@@ -1,8 +1,30 @@
+# Dependencies and build output
 node_modules/
+.vercel/
+
+# Secrets - keys live in .env locally and in Vercel's environment variables, never in git
 .env
 .env.*
 !.env.example
-.vercel/
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+id_rsa*
+id_ed25519*
+.npmrc
+
+# Personal data
+smartfridge-backup-*.json
+data/
+backups/
+
+# Local tooling and logs
 .claude/
+.ollama/
 *.log
+*.tmp
 .DS_Store
+Thumbs.db
