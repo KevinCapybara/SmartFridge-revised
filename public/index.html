@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#3f7d4e">
+  <meta name="description" content="Scan grocery receipts, track what's in your fridge, and use it up before it expires.">
+  <title>SmartFridge (revised)</title>
+
+  <!-- PWA: installable on Android (Chrome) and iOS (Safari > Share > Add to Home Screen) -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="SmartFridge">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>SmartFridge <span class="revised">(revised)</span></h1>
+    <div class="header-row">
+      <p id="ai-badge" class="badge" hidden></p>
+      <button id="settings-btn" class="btn small" aria-label="Settings and backup">⚙ Settings</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button role="tab" id="tab-fridge" aria-controls="panel-fridge" aria-selected="true">Fridge</button>
+    <button role="tab" id="tab-scan" aria-controls="panel-scan" aria-selected="false">Scan receipt</button>
+    <button role="tab" id="tab-recipes" aria-controls="panel-recipes" aria-selected="false">Recipes</button>
+  </nav>
+
+  <main>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <div id="install-banner" class="card install" hidden>
+      <p id="install-text"></p>
+      <div class="row">
+        <button id="install-dismiss" class="btn small">Not now</button>
+        <button id="install-btn" class="btn small primary" hidden>Install</button>
+      </div>
+    </div>
+
+    <!-- FRIDGE -->
+    <section id="panel-fridge" role="tabpanel" aria-labelledby="tab-fridge">
+      <div class="card">
+        <div class="seg" role="group" aria-label="Filter">
+          <button id="filter-all" class="seg-btn" aria-pressed="true">All food</button>
+          <button id="filter-soon" class="seg-btn" aria-pressed="false">Soon to expire</button>
+        </div>
+        <div id="slider-row" class="slider-row" hidden>
+          <label for="days-slider">Expires in <output id="days-out">3</output> day<span id="days-s">s</span> or less</label>
+          <input id="days-slider" type="range" min="1" max="14" value="3">
+        </div>
+      </div>
+
+      <ul id="item-list" class="item-list" aria-live="polite"></ul>
+      <p id="empty" class="empty" hidden></p>
+
+      <details class="card add-card" id="add-details">
+        <summary>Add an item manually</summary>
+        <form id="add-form" class="form-grid" autocomplete="off">
+          <label>Name
+            <input id="add-name" name="name" required maxlength="80" placeholder="e.g. milk">
+          </label>
+          <label>Qty
+            <input id="add-qty" name="quantity" type="number" min="1" max="999" value="1" inputmode="numeric">
+          </label>
+          <label>Expires in (days)
+            <input id="add-days" name="days" type="number" min="0" max="3650" inputmode="numeric" placeholder="auto">
+          </label>
+          <label>or on date
+            <input id="add-date" name="expiresOn" type="date">
+          </label>
+          <p class="hint">Leave both blank and SmartFridge will estimate the shelf life from the name.</p>
+          <button type="submit" class="btn primary">Add to fridge</button>
+        </form>
+      </details>
+    </section>
+
+    <!-- SCAN -->
+    <section id="panel-scan" role="tabpanel" aria-labelledby="tab-scan" hidden>
+      <div class="card">
+        <h2>1. Add the receipt</h2>
+        <label class="btn primary file-btn">
+          Take photo / choose image
+          <input id="receipt-file" type="file" accept="image/*" capture="environment" hidden>
+        </label>
+        <img id="receipt-preview" class="preview" alt="Receipt preview" hidden>
+        <progress id="ocr-progress" max="1" value="0" hidden></progress>
+        <p id="ocr-status" class="hint" aria-live="polite"></p>
+
+        <label class="stack">Receipt text <span class="hint">(from the scan, or paste/type it yourself)</span>
+          <textarea id="receipt-text" rows="7" placeholder="Scanned text appears here. You can also paste a receipt."></textarea>
+        </label>
+        <button id="parse-btn" class="btn primary">Find the food</button>
+      </div>
+
+      <div id="review-card" class="card" hidden>
+        <h2>2. Check the list</h2>
+        <p id="review-note" class="hint"></p>
+        <ul id="review-list" class="review-list"></ul>
+        <div class="row">
+          <button id="review-add-row" class="btn">Add a row</button>
+          <button id="review-save" class="btn primary">Add to fridge</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- RECIPES -->
+    <section id="panel-recipes" role="tabpanel" aria-labelledby="tab-recipes" hidden>
+      <div class="card">
+        <label for="recipe-slider">Use food that expires in <output id="recipe-days-out">7</output> days or less</label>
+        <input id="recipe-slider" type="range" min="1" max="14" value="7">
+        <button id="recipe-btn" class="btn primary">What can I make?</button>
+      </div>
+      <p id="recipe-status" class="hint" aria-live="polite"></p>
+      <div id="recipe-list"></div>
+    </section>
+  </main>
+
+  <!-- Edit dialog -->
+  <dialog id="edit-dialog">
+    <form id="edit-form" method="dialog" class="form-grid">
+      <h2>Edit item</h2>
+      <label>Name <input id="edit-name" required maxlength="80"></label>
+      <label>Qty <input id="edit-qty" type="number" min="1" max="999" inputmode="numeric"></label>
+      <label>Expires on <input id="edit-date" type="date" required></label>
+      <div class="row">
+        <button type="button" id="edit-cancel" class="btn">Cancel</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Settings dialog -->
+  <dialog id="settings-dialog">
+    <div class="form-grid settings">
+      <h2>Settings</h2>
+
+      <label class="wide">AI access code
+        <input id="code-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Only needed if your deployment sets one">
+      </label>
+      <p id="ai-status" class="hint wide"></p>
+      <button id="code-save" class="btn primary wide">Save code</button>
+
+      <h3 class="wide">Backup</h3>
+      <p class="hint wide">Your fridge is stored only on this device. Export a backup before clearing browser data or switching phones.</p>
+      <button id="export-btn" class="btn">Export backup</button>
+      <label class="btn file-btn">Import backup
+        <input id="import-file" type="file" accept="application/json,.json" hidden>
+      </label>
+
+      <button id="settings-close" class="btn wide">Close</button>
+    </div>
+  </dialog>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

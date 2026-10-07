@@ -1,0 +1,21 @@
+{
+  "name": "smartfridge-revised",
+  "version": "1.0.0",
+  "description": "SmartFridge (revised): scan a grocery receipt, track what's in your fridge, see what's expiring, get recipes.",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.132.0",
+    "express": "^5.2.1"
+  }
+}
