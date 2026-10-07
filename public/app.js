@@ -293,8 +293,8 @@ function itemRow(item) {
     h(
       'div',
       { class: 'item-actions' },
-      h('button', { class: 'btn small ghost', onclick: () => openEdit(item) }, icon('pencil'), 'Edit'),
-      h('button', { class: 'btn small danger', onclick: () => removeItem(item), 'aria-label': `Remove ${item.name}` }, icon('trash-2'), 'Used / remove'),
+      h('button', { class: 'btn small ghost', onclick: () => openEdit(item), title: 'Edit' }, icon('pencil'), h('span', { class: 'btn-text' }, 'Edit')),
+      h('button', { class: 'btn small danger', onclick: () => removeItem(item), 'aria-label': `Remove ${item.name}`, title: 'Used / remove' }, icon('trash-2'), h('span', { class: 'btn-text' }, 'Used / remove')),
     ),
   );
 }
