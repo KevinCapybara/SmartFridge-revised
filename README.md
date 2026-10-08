@@ -124,7 +124,8 @@ With a cloud provider, the photo is sent to it (the app never stores it). With t
 
 ```
 public/              static site (what Vercel serves)
-  index.html, app.js, styles.css
+  index.html, app.js, styles.css   styles.css holds the design tokens (the "Organic / Natural" look)
+  fonts/             self-hosted Fraunces + Nunito (SIL OFL licences alongside); icons are Lucide, inlined in index.html
   manifest.webmanifest, sw.js, icons/   PWA install + offline
   shared/            logic used by the browser and the tests
     foods.js         shelf-life table + matching

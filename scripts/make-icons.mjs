@@ -46,10 +46,10 @@ function encodePng(size, rgba) {
   ]);
 }
 
-const GREEN = [63, 125, 78];
-const SOFT = [220, 235, 202];
-const WHITE = [255, 255, 255];
-const DARK = [47, 98, 60];
+const GREEN = [93, 112, 82]; // moss
+const SOFT = [230, 220, 205]; // sand
+const WHITE = [253, 252, 248]; // rice paper
+const DARK = [193, 140, 93]; // terracotta
 
 /** Anti-aliased rounded-rect coverage (0..1) at pixel centre (px, py). */
 function roundedRect(px, py, x, y, w, h, r) {
