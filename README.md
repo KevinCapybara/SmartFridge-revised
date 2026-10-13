@@ -1,4 +1,4 @@
-# SmartFridge
+# [ongoing] SmartFridge (revised)
 
 Reducing household food waste: scans grocery receipts to add foods to your fridge, keeps track of when foods in your fridge expire, and generates recipes using your soon-to-expire foods.
 
